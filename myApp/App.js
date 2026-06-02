@@ -11,7 +11,7 @@ import axios from 'axios';
 export default function App() {
   const [isOn, setIsOn] = useState(false);
 
-  const API = "http://10.10.58.26:8000"; // 🔥 đổi IP máy bạn
+  const API = "http://10.10.58.108:8000"; // 🔥 đổi IP máy bạn
 
   const turnOn = async () => {
     try {
