@@ -1,5 +1,6 @@
 
 from fastapi import FastAPI
+from sqlalchemy import inspect, text
 
 from app.database import engine
 
@@ -17,6 +18,27 @@ app = FastAPI()
 Device.metadata.create_all(bind=engine)
 SensorData.metadata.create_all(bind=engine)
 NotificationToken.metadata.create_all(bind=engine)
+
+with engine.begin() as connection:
+    columns = {
+        column["name"]
+        for column in inspect(connection).get_columns("sensor_data")
+    }
+
+    if "light" not in columns:
+        connection.execute(
+            text("ALTER TABLE sensor_data ADD COLUMN light INT DEFAULT 0")
+        )
+
+    if "rain" not in columns:
+        connection.execute(
+            text("ALTER TABLE sensor_data ADD COLUMN rain INT DEFAULT 0")
+        )
+
+    if "raining" not in columns:
+        connection.execute(
+            text("ALTER TABLE sensor_data ADD COLUMN raining BOOLEAN DEFAULT FALSE")
+        )
 
 app.include_router(router)
 app.include_router(sensor_router)

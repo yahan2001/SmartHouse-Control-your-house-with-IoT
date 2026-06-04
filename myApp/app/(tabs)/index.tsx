@@ -37,10 +37,32 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const MAX_GAS_VALUE = 2500;
+const MAX_GAS_VALUE = 1500;
+const GAS_ALERT_COOLDOWN_MS = 60 * 1000;
+const SENSOR_REFRESH_INTERVAL_MS = 5000;
+const DEVICE_REFRESH_INTERVAL_MS = 15000;
+const POLLING_REQUEST_TIMEOUT_MS = 2500;
+const DARK_LIGHT_VALUE = 3000;
+const BRIGHT_LIGHT_VALUE = 2900;
 const SCREEN = Dimensions.get("window");
 const DA_NANG_WEATHER_URL =
   "https://api.open-meteo.com/v1/forecast?latitude=16.0678&longitude=108.2208&current=temperature_2m&timezone=Asia%2FHo_Chi_Minh";
+const FALLBACK_BACKEND_IP = "172.20.10.12:8000";
+
+const getDefaultBackendIp = () => {
+  const expoHost =
+    Constants.expoConfig?.hostUri ||
+    Constants.expoGoConfig?.debuggerHost ||
+    "";
+
+  const host = expoHost.split(":")[0];
+
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+    return `${host}:8000`;
+  }
+
+  return FALLBACK_BACKEND_IP;
+};
 
 type Device = {
   id: number;
@@ -84,24 +106,61 @@ const ROOM_FILTERS = [
   },
 ];
 
+const repairMojibakeText = (value: string) => {
+  if (!/[\u00c3\u00c4\u00c6\u00c2]|\u00e1\u00ba|\u00e1\u00bb/.test(value)) {
+    return value;
+  }
+
+  try {
+    const encoded = Array.from(value)
+      .map((char) => {
+        const code = char.charCodeAt(0);
+        return code <= 255
+          ? `%${code.toString(16).padStart(2, "0")}`
+          : char;
+      })
+      .join("");
+
+    return decodeURIComponent(encoded);
+  } catch {
+    return value;
+  }
+};
+
 const normalizeText = (value: string) =>
-  value
+  repairMojibakeText(value)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\u0111/g, "d")
     .trim();
 
+const getLightLabel = (value: number) => {
+  if (value > DARK_LIGHT_VALUE) {
+    return "Tối";
+  }
+
+  if (value < BRIGHT_LIGHT_VALUE) {
+    return "Sáng";
+  }
+
+};
+
 export default function HomeScreen() {
   // Configurable API state
-  const [serverIp, setServerIp] = useState("192.168.2.7:8000");
-  const [tempIp, setTempIp] = useState("192.168.2.7:8000");
+  const [serverIp, setServerIp] = useState(getDefaultBackendIp);
+  const [tempIp, setTempIp] = useState(getDefaultBackendIp);
   const [isIpModalOpen, setIsIpModalOpen] = useState(false);
 
   const [devices, setDevices] = useState<Device[]>([]);
   const [gas, setGas] = useState(0);
+  const [light, setLight] = useState(0);
+  const [rain, setRain] = useState(0);
+  const [raining, setRaining] = useState(false);
   const [temperature, setTemperature] = useState(0);
   const [humidity, setHumidity] = useState(0);
+  const [automaticLight, setAutomaticLight] = useState(false);
+  const [automaticClothes, setAutomaticClothes] = useState(false);
   const [loading, setLoading] = useState(false);
   const [connectionError, setConnectionError] = useState("");
   const [notificationStatus, setNotificationStatus] = useState("");
@@ -125,6 +184,7 @@ export default function HomeScreen() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const gasPulseAnim = useRef(new Animated.Value(1)).current;
   const voicePressRecordingRef = useRef(false);
+  const lastLocalGasAlertAtRef = useRef(0);
 
   // Compute actual API url
   const getApiUrl = useCallback(() => {
@@ -242,7 +302,9 @@ export default function HomeScreen() {
     if (!showSilently) setLoading(true);
     try {
       const API = getApiUrl();
-      const response = await axios.get(`${API}/devices/`);
+      const response = await axios.get(`${API}/devices/`, {
+        timeout: POLLING_REQUEST_TIMEOUT_MS,
+      });
       setDevices(response.data);
       setConnectionError("");
     } catch (error) {
@@ -259,18 +321,66 @@ export default function HomeScreen() {
   const fetchSensorData = useCallback(async () => {
     try {
       const API = getApiUrl();
-      const response = await axios.get(`${API}/sensor-data/latest`);
+      const response = await axios.get(`${API}/sensor-data/latest`, {
+        timeout: POLLING_REQUEST_TIMEOUT_MS,
+      });
       const data = response.data || {};
       setGas(data.gas || 0);
+      setLight(data.light || 0);
+      setRain(data.rain || 0);
+      setRaining(Boolean(data.raining));
       setTemperature(data.temperature || 0);
       setHumidity(data.humidity || 0);
 
-      // Gas warning
       if (data.gas > MAX_GAS_VALUE) {
-        // Alert trigger only occasionally or handle locally in UI elegantly
+        const now = Date.now();
+
+        if (now - lastLocalGasAlertAtRef.current > GAS_ALERT_COOLDOWN_MS) {
+          lastLocalGasAlertAtRef.current = now;
+
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: "Cảnh báo khí gas",
+              body: `Giá trị gas đang nguy hiểm: ${data.gas}. Hãy kiểm tra ngay.`,
+              sound: "default",
+              priority: Notifications.AndroidNotificationPriority.HIGH,
+              data: {
+                type: "gas_alert",
+                gas: data.gas,
+                threshold: MAX_GAS_VALUE,
+              },
+            },
+            trigger: null,
+          });
+        }
       }
     } catch (error) {
       console.log("Error fetching sensors:", error);
+    }
+  }, [getApiUrl]);
+
+  const fetchAutomaticLightStatus = useCallback(async () => {
+    try {
+      const API = getApiUrl();
+      const response = await axios.get(`${API}/devices/automatic-light/status`, {
+        timeout: POLLING_REQUEST_TIMEOUT_MS,
+      });
+      setAutomaticLight(Boolean(response.data.automatic));
+    } catch (error) {
+      console.log("Error fetching automatic light status:", error);
+    }
+  }, [getApiUrl]);
+
+  const fetchAutomaticClothesStatus = useCallback(async () => {
+    try {
+      const API = getApiUrl();
+      const response = await axios.get(`${API}/devices/automatic-clothes/status`, {
+        timeout: POLLING_REQUEST_TIMEOUT_MS,
+      });
+      setAutomaticClothes(Boolean(response.data.automatic));
+      setRaining(Boolean(response.data.raining));
+    } catch (error) {
+      console.log("Error fetching automatic clothes status:", error);
     }
   }, [getApiUrl]);
 
@@ -280,8 +390,27 @@ export default function HomeScreen() {
   const setDeviceStatus = async (device: Device, action: DeviceAction) => {
     try {
       const API = getApiUrl();
-      await axios.post(`${API}/devices/${device.id}`, { action });
-      await fetchDevices(true);
+      const manuallyControlsLight = isLightDevice(device);
+      const nextStatus = action === "on";
+
+      setDevices((currentDevices) =>
+        currentDevices.map((currentDevice) =>
+          currentDevice.id === device.id
+            ? { ...currentDevice, status: nextStatus }
+            : currentDevice
+        )
+      );
+
+      if (manuallyControlsLight) {
+        setAutomaticLight(false);
+      }
+
+      const response = await axios.post(`${API}/devices/${device.id}`, { action });
+
+      if (typeof response.data?.automatic === "boolean") {
+        setAutomaticLight(response.data.automatic);
+      }
+
       return true;
     } catch (error) {
       console.log("Error controlling device:", error);
@@ -293,6 +422,37 @@ export default function HomeScreen() {
   const toggleDevice = async (device: Device) => {
     const action = device.status ? "off" : "on";
     await setDeviceStatus(device, action);
+  };
+
+  const toggleAutomaticLight = async () => {
+    try {
+      const API = getApiUrl();
+      const action = automaticLight ? "off" : "on";
+      const response = await axios.post(`${API}/devices/automatic-light/mode`, {
+        action,
+      });
+      setAutomaticLight(Boolean(response.data.automatic));
+      await fetchDevices(true);
+    } catch (error) {
+      console.log("Error automatic light:", error);
+      Alert.alert("Automatic", "Khong bat/tat duoc che do automatic tren ESP32.");
+    }
+  };
+
+  const toggleAutomaticClothes = async () => {
+    try {
+      const API = getApiUrl();
+      const action = automaticClothes ? "off" : "on";
+      const response = await axios.post(`${API}/devices/automatic-clothes/mode`, {
+        action,
+      });
+      setAutomaticClothes(Boolean(response.data.automatic));
+      setRaining(Boolean(response.data.raining));
+      await fetchDevices(true);
+    } catch (error) {
+      console.log("Error automatic clothes:", error);
+      Alert.alert("Automatic", "Khong bat/tat duoc che do phoi do tu dong tren ESP32.");
+    }
   };
 
   /*
@@ -419,6 +579,15 @@ export default function HomeScreen() {
 
   const registerForPushNotifications = useCallback(async () => {
     try {
+      if (Platform.OS === "android") {
+        await Notifications.setNotificationChannelAsync("default", {
+          name: "default",
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: "#EF4444",
+        });
+      }
+
       if (!ExpoDevice.isDevice) {
         setNotificationStatus("Can iPhone that de nhan canh bao push.");
         return;
@@ -457,12 +626,13 @@ export default function HomeScreen() {
 
       await axios.post(`${API}/notifications/register`, {
         token: pushToken.data,
-        platform: "ios",
+        platform: Platform.OS,
       });
 
+      setNotificationStatus("Da dang ky thong bao.");
     } catch (error) {
       console.log("Error registering notifications:", error);
-      
+      setNotificationStatus("Khong dang ky duoc thong bao.");
     }
   }, [getApiUrl]);
 
@@ -470,14 +640,23 @@ export default function HomeScreen() {
   useEffect(() => {
     fetchDevices(false);
     fetchSensorData();
+    fetchAutomaticLightStatus();
+    fetchAutomaticClothesStatus();
     registerForPushNotifications();
 
-    const interval = setInterval(() => {
+    const sensorInterval = setInterval(() => {
       fetchSensorData();
-    }, 3000);
+    }, SENSOR_REFRESH_INTERVAL_MS);
 
-    return () => clearInterval(interval);
-  }, [fetchDevices, fetchSensorData, registerForPushNotifications]);
+    const deviceInterval = setInterval(() => {
+      fetchDevices(true);
+    }, DEVICE_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(sensorInterval);
+      clearInterval(deviceInterval);
+    };
+  }, [fetchDevices, fetchSensorData, fetchAutomaticLightStatus, fetchAutomaticClothesStatus, registerForPushNotifications]);
 
   // Filter devices list based on selected room
   const selectedRoomFilter = ROOM_FILTERS.find(
@@ -498,10 +677,21 @@ export default function HomeScreen() {
           );
         });
 
+  const isLightDevice = (device: Device) => {
+    const name = normalizeText(device.name || "");
+    const type = normalizeText(device.type || "");
+
+    return (
+      name.includes("light") ||
+      name.includes("den") ||
+      type.includes("light")
+    );
+  };
+
   // Render device icon dynamically based on name/type
   const getDeviceIconAndColor = (device: Device) => {
-    const name = device.name.toLowerCase();
-    const type = device.type.toLowerCase();
+    const name = repairMojibakeText(device.name).toLowerCase();
+    const type = repairMojibakeText(device.type).toLowerCase();
     const isOn = device.status;
 
     if (name.includes("đèn") || type.includes("light")) {
@@ -697,6 +887,63 @@ export default function HomeScreen() {
             <Text style={[styles.sensorValue, gas > MAX_GAS_VALUE && { color: "#EF4444" }]}>{gas}</Text>
             <Text style={styles.sensorLabel}>Khí Gas</Text>
           </Animated.View>
+
+          <TouchableOpacity
+            style={[
+              styles.sensorTile,
+              styles.lightTile,
+              automaticLight && styles.lightTileAutomatic,
+            ]}
+            onPress={toggleAutomaticLight}
+            activeOpacity={0.8}
+          >
+            <View style={styles.sensorIconRow}>
+              <MaterialCommunityIcons
+                name={automaticLight ? "lightbulb-auto" : "white-balance-sunny"}
+                size={24}
+                color={automaticLight ? "#FBBF24" : "#F97316"}
+              />
+              <Text
+                style={[
+                  styles.sensorStatusText,
+                  automaticLight && { color: "#B45309", fontWeight: "bold" },
+                ]}
+              >
+                {automaticLight ? "Auto" : "Manual"}
+              </Text>
+            </View>
+            <Text style={styles.sensorValue}>{getLightLabel(light)}</Text>
+            <Text style={styles.sensorLabel}>Anh sang</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.sensorTile,
+              styles.rainTile,
+              raining && styles.rainTileActive,
+            ]}
+            onPress={toggleAutomaticClothes}
+            activeOpacity={0.8}
+          >
+            <View style={styles.sensorIconRow}>
+              <MaterialCommunityIcons
+                name={raining ? "weather-pouring" : "weather-partly-cloudy"}
+                size={24}
+                color={raining ? "#2563EB" : "#64748B"}
+              />
+              <Text
+                style={[
+                  styles.sensorStatusText,
+                  raining && { color: "#2563EB", fontWeight: "bold" },
+                ]}
+              >
+                {automaticClothes ? "Auto" : "Manual"}
+              </Text>
+            </View>
+            <Text style={styles.sensorValue}>{raining ? "Mưa" : "Khô"}</Text>
+            <Text style={styles.sensorSubValue}>DO: {rain}</Text>
+            <Text style={styles.sensorLabel}>Mưa / Phơi đồ</Text>
+          </TouchableOpacity>
         </View>
 
         {/* ROOM FILTER CHIPS */}
@@ -764,9 +1011,11 @@ export default function HomeScreen() {
 
                   {/* Device meta texts */}
                   <Text style={styles.tileDeviceName} numberOfLines={1}>
-                    {device.name}
+                    {repairMojibakeText(device.name)}
                   </Text>
-                  <Text style={styles.tileDeviceRoom}>{device.room}</Text>
+                  <Text style={styles.tileDeviceRoom}>
+                    {repairMojibakeText(device.room)}
+                  </Text>
 
                   {/* Quick Toggle pill */}
                   <View style={styles.tileFooter}>
@@ -1055,11 +1304,13 @@ const styles = StyleSheet.create({
   },
   sensorsRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
     justifyContent: "space-between",
     marginBottom: 20,
   },
   sensorTile: {
-    width: "31%",
+    width: "48%",
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E1EEF9",
@@ -1080,6 +1331,20 @@ const styles = StyleSheet.create({
     borderColor: "rgba(239, 68, 68, 0.5)",
     backgroundColor: "rgba(220, 38, 38, 0.15)",
   },
+  lightTile: {
+    borderColor: "rgba(251, 191, 36, 0.2)",
+  },
+  lightTileAutomatic: {
+    backgroundColor: "rgba(251, 191, 36, 0.12)",
+    borderColor: "rgba(251, 191, 36, 0.65)",
+  },
+  rainTile: {
+    borderColor: "rgba(100, 116, 139, 0.18)",
+  },
+  rainTileActive: {
+    backgroundColor: "rgba(37, 99, 235, 0.12)",
+    borderColor: "rgba(37, 99, 235, 0.55)",
+  },
   sensorIconRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1095,6 +1360,11 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#0F3A63",
     marginTop: 10,
+  },
+  sensorSubValue: {
+    fontSize: 10,
+    color: "#5C7A99",
+    marginTop: 2,
   },
   sensorLabel: {
     fontSize: 11,

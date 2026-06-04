@@ -2,20 +2,48 @@ import json
 import os
 import re
 import base64
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv()
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(BACKEND_DIR / ".env")
 
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/"
-    "models/gemini-2.5-flash:generateContent"
+    f"models/{GEMINI_MODEL}:generateContent"
 )
 
 
 class GeminiCommandError(Exception):
     pass
+
+
+def _gemini_error_message(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+
+    message = (
+        data.get("error", {}).get("message")
+        if isinstance(data, dict)
+        else None
+    )
+
+    if message:
+        return f"Gemini API error {response.status_code}: {message}"
+
+    return f"Gemini API error {response.status_code}"
+
+
+def _raise_for_gemini_response(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise GeminiCommandError(_gemini_error_message(response)) from exc
 
 
 def _extract_json(text: str) -> dict:
@@ -98,7 +126,7 @@ Rules:
             json=payload
         )
 
-    response.raise_for_status()
+    _raise_for_gemini_response(response)
     data = response.json()
 
     try:
@@ -185,7 +213,7 @@ Rules:
             json=payload
         )
 
-    response.raise_for_status()
+    _raise_for_gemini_response(response)
     data = response.json()
 
     try:

@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <math.h>
 #include <WebServer.h>
 #include <ESP32Servo.h>
 #include <HTTPClient.h>
@@ -8,9 +9,8 @@
     WIFI
 */
 
-const char* ssid = "THUC 24H COFFEE T2";
-const char* password = "61ngothinham";
-
+const char* ssid = "iPhone";
+const char* password = "12346789";
 
 
 /*
@@ -24,21 +24,41 @@ WebServer server(80);
 */
 
 Servo doorServo;
+Servo clothesServo;
 
 /*
     GPIO ESP32 DevKit/WROOM
     Avoid GPIO 6-11 because they are used by onboard flash.
 */
-int maxGasValue = 2500;
+int maxGasValue = 1500;
+int darkLightValue = 3000;
+int brightLightValue = 2900;
+int rainDetectedLevel = LOW;
 const unsigned long SENSOR_INTERVAL_MS = 5000;
+const unsigned long SENSOR_POST_CONNECT_TIMEOUT_MS = 1000;
+const unsigned long SENSOR_POST_READ_TIMEOUT_MS = 1500;
+const unsigned long SENSOR_POST_BACKOFF_MS = 15000;
 const unsigned long SERVO_MOVE_MS = 700;
 unsigned long lastSensorReadMs = 0;
+unsigned long sensorPostBackoffUntilMs = 0;
+int failedSensorPostCount = 0;
+const bool BUZZER_ACTIVE_LOW = false;
+const int BUZZER_CHANNEL = 15;
+const int BUZZER_RESOLUTION = 8;
+const int BUZZER_ALARM_FREQ = 2500;
+const unsigned long BUZZER_STEP_INTERVAL_MS = 10;
+bool buzzerActive = false;
+int buzzerSinStep = 0;
+unsigned long lastBuzzerStepMs = 0;
 #define LIGHT1 25
 #define LIGHT2 26
 #define LIGHT3 27
 #define LIGHT4 32
 #define SERVO_PIN 21
+#define CLOTHES_SERVO_PIN 14
 #define MQ2_PIN 34
+#define LIGHT_SENSOR_PIN 35
+#define RAIN_SENSOR_PIN 19
 #define BUZZER_PIN 23
 
 #define DHTPIN 22
@@ -49,6 +69,12 @@ bool light1State = false;
 bool light2State = false;
 bool light3State = false;
 bool light4State = false;
+bool automaticLightMode = false;
+bool automaticLightsOn = false;
+bool clotheslineExtended = true;
+bool automaticClothesMode = true;
+
+String buildAutomaticStatusJson();
 
 void moveDoorServo(int angle) {
 
@@ -58,12 +84,23 @@ void moveDoorServo(int angle) {
     doorServo.detach();
 }
 
+void moveClothesServo(int angle) {
+
+    clothesServo.attach(CLOTHES_SERVO_PIN);
+    clothesServo.write(angle);
+    delay(SERVO_MOVE_MS);
+    clothesServo.detach();
+}
+
 /*
     SEND GAS DATA TO FASTAPI
 */
 
-void sendEnvironmentData(
+bool sendEnvironmentData(
     int gasValue,
+    int lightValue,
+    int rainValue,
+    bool raining,
     float temperature,
     float humidity
 ) {
@@ -71,10 +108,12 @@ void sendEnvironmentData(
     HTTPClient http;
 
     String serverUrl =
-        "http://192.168.1.168:8000/sensor-data/";// Thay đổi URL của của backend
+        "http://172.20.10.12:8000/sensor-data/";//ip backend fastapi
 
     http.begin(serverUrl);
-    http.setTimeout(1000);
+    http.setConnectTimeout(SENSOR_POST_CONNECT_TIMEOUT_MS);
+    http.setTimeout(SENSOR_POST_READ_TIMEOUT_MS);
+    http.setReuse(false);
 
     http.addHeader(
         "Content-Type",
@@ -87,12 +126,44 @@ void sendEnvironmentData(
     jsonData += String(gasValue);
     jsonData += ",";
 
+    jsonData += "\"light\":";
+    jsonData += String(lightValue);
+    jsonData += ",";
+
+    jsonData += "\"rain\":";
+    jsonData += String(rainValue);
+    jsonData += ",";
+
+    jsonData += "\"raining\":";
+    jsonData += raining ? "true" : "false";
+    jsonData += ",";
+
     jsonData += "\"temperature\":";
     jsonData += String(temperature);
     jsonData += ",";
 
     jsonData += "\"humidity\":";
     jsonData += String(humidity);
+    jsonData += ",";
+
+    jsonData += "\"light1\":";
+    jsonData += light1State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"light2\":";
+    jsonData += light2State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"light3\":";
+    jsonData += light3State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"light4\":";
+    jsonData += light4State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"clothesline\":";
+    jsonData += clotheslineExtended ? "true" : "false";
 
     jsonData += "}";
 
@@ -102,15 +173,26 @@ void sendEnvironmentData(
     Serial.print("HTTP Response: ");
     Serial.println(httpResponseCode);
 
+    if(httpResponseCode < 0) {
+
+        Serial.print("HTTP Error: ");
+        Serial.println(http.errorToString(httpResponseCode));
+        http.end();
+
+        return false;
+    }
+
     String response =
         http.getString();
 
     Serial.println(response);
 
     http.end();
+
+    return true;
 }
 
-void setLight(
+void applyLight(
     int pin,
     bool& state,
     bool nextState,
@@ -122,11 +204,91 @@ void setLight(
 
     Serial.print(deviceName);
     Serial.println(nextState ? " ON" : " OFF");
+}
+
+void setLight(
+    int pin,
+    bool& state,
+    bool nextState,
+    const char* deviceName
+) {
+
+    applyLight(pin, state, nextState, deviceName);
 
     server.send(
         200,
         "text/plain",
         String(deviceName) + (nextState ? " ON" : " OFF")
+    );
+}
+
+void setManualLight(
+    int pin,
+    bool& state,
+    bool nextState,
+    const char* deviceName
+) {
+
+    automaticLightMode = false;
+    applyLight(pin, state, nextState, deviceName);
+
+    Serial.println("Automatic light mode OFF by manual control");
+
+    server.send(
+        200,
+        "application/json",
+        buildAutomaticStatusJson()
+    );
+}
+
+void setAllLights(bool nextState) {
+
+    applyLight(LIGHT1, light1State, nextState, "LIGHT1");
+    applyLight(LIGHT2, light2State, nextState, "LIGHT2");
+    applyLight(LIGHT3, light3State, nextState, "LIGHT3");
+    applyLight(LIGHT4, light4State, nextState, "LIGHT4");
+    automaticLightsOn = nextState;
+}
+
+String buildAutomaticStatusJson() {
+
+    String jsonData = "{";
+
+    jsonData += "\"automatic\":";
+    jsonData += automaticLightMode ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"light1\":";
+    jsonData += light1State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"light2\":";
+    jsonData += light2State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"light3\":";
+    jsonData += light3State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"light4\":";
+    jsonData += light4State ? "true" : "false";
+
+    jsonData += "}";
+
+    return jsonData;
+}
+
+void setAutomaticLightMode(bool enabled) {
+
+    automaticLightMode = enabled;
+
+    Serial.print("Automatic light mode ");
+    Serial.println(enabled ? "ON" : "OFF");
+
+    server.send(
+        200,
+        "application/json",
+        buildAutomaticStatusJson()
     );
 }
 
@@ -156,33 +318,187 @@ void closeDoor() {
     );
 }
 
+String buildAutomaticClothesStatusJson(bool raining) {
+
+    String jsonData = "{";
+
+    jsonData += "\"automatic\":";
+    jsonData += automaticClothesMode ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"raining\":";
+    jsonData += raining ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"clothesline\":";
+    jsonData += clotheslineExtended ? "true" : "false";
+
+    jsonData += "}";
+
+    return jsonData;
+}
+
+void extendClothesline() {
+
+    moveClothesServo(90);
+    clotheslineExtended = true;
+
+    Serial.println("Clothesline Extended");
+}
+
+void retractClothesline() {
+
+    moveClothesServo(0);
+    clotheslineExtended = false;
+
+    Serial.println("Clothesline Retracted");
+}
+
+void manualExtendClothesline() {
+
+    automaticClothesMode = false;
+    extendClothesline();
+
+    server.send(
+        200,
+        "application/json",
+        buildAutomaticClothesStatusJson(
+            digitalRead(RAIN_SENSOR_PIN) == rainDetectedLevel
+        )
+    );
+}
+
+void manualRetractClothesline() {
+
+    automaticClothesMode = false;
+    retractClothesline();
+
+    server.send(
+        200,
+        "application/json",
+        buildAutomaticClothesStatusJson(
+            digitalRead(RAIN_SENSOR_PIN) == rainDetectedLevel
+        )
+    );
+}
+
+void setAutomaticClothesMode(bool enabled) {
+
+    automaticClothesMode = enabled;
+
+    Serial.print("Automatic clothes mode ");
+    Serial.println(enabled ? "ON" : "OFF");
+
+    server.send(
+        200,
+        "application/json",
+        buildAutomaticClothesStatusJson(
+            digitalRead(RAIN_SENSOR_PIN) == rainDetectedLevel
+        )
+    );
+}
+
+void handleAutomaticClothes(bool raining) {
+
+    if(!automaticClothesMode) {
+        return;
+    }
+
+    if(raining && clotheslineExtended) {
+        retractClothesline();
+        Serial.println("AUTO: RAIN - CLOTHESLINE RETRACTED");
+    } else if(!raining && !clotheslineExtended) {
+        extendClothesline();
+        Serial.println("AUTO: DRY - CLOTHESLINE EXTENDED");
+    }
+}
+
 void registerDeviceRoutes() {
 
-    server.on("/device/25/on", []() { setLight(LIGHT1, light1State, true, "LIGHT1"); });
-    server.on("/device/25/off", []() { setLight(LIGHT1, light1State, false, "LIGHT1"); });
-    server.on("/device/2/on", []() { setLight(LIGHT1, light1State, true, "LIGHT1"); });
-    server.on("/device/2/off", []() { setLight(LIGHT1, light1State, false, "LIGHT1"); });
+    server.on("/device/25/on", []() { setManualLight(LIGHT1, light1State, true, "LIGHT1"); });
+    server.on("/device/25/off", []() { setManualLight(LIGHT1, light1State, false, "LIGHT1"); });
+    server.on("/device/2/on", []() { setManualLight(LIGHT1, light1State, true, "LIGHT1"); });
+    server.on("/device/2/off", []() { setManualLight(LIGHT1, light1State, false, "LIGHT1"); });
 
-    server.on("/device/26/on", []() { setLight(LIGHT2, light2State, true, "LIGHT2"); });
-    server.on("/device/26/off", []() { setLight(LIGHT2, light2State, false, "LIGHT2"); });
-    server.on("/device/6/on", []() { setLight(LIGHT2, light2State, true, "LIGHT2"); });
-    server.on("/device/6/off", []() { setLight(LIGHT2, light2State, false, "LIGHT2"); });
+    server.on("/device/26/on", []() { setManualLight(LIGHT2, light2State, true, "LIGHT2"); });
+    server.on("/device/26/off", []() { setManualLight(LIGHT2, light2State, false, "LIGHT2"); });
+    server.on("/device/6/on", []() { setManualLight(LIGHT2, light2State, true, "LIGHT2"); });
+    server.on("/device/6/off", []() { setManualLight(LIGHT2, light2State, false, "LIGHT2"); });
 
-    server.on("/device/27/on", []() { setLight(LIGHT3, light3State, true, "LIGHT3"); });
-    server.on("/device/27/off", []() { setLight(LIGHT3, light3State, false, "LIGHT3"); });
-    server.on("/device/7/on", []() { setLight(LIGHT3, light3State, true, "LIGHT3"); });
-    server.on("/device/7/off", []() { setLight(LIGHT3, light3State, false, "LIGHT3"); });
+    server.on("/device/27/on", []() { setManualLight(LIGHT3, light3State, true, "LIGHT3"); });
+    server.on("/device/27/off", []() { setManualLight(LIGHT3, light3State, false, "LIGHT3"); });
+    server.on("/device/7/on", []() { setManualLight(LIGHT3, light3State, true, "LIGHT3"); });
+    server.on("/device/7/off", []() { setManualLight(LIGHT3, light3State, false, "LIGHT3"); });
 
-    server.on("/device/32/on", []() { setLight(LIGHT4, light4State, true, "LIGHT4"); });
-    server.on("/device/32/off", []() { setLight(LIGHT4, light4State, false, "LIGHT4"); });
-    server.on("/device/10/on", []() { setLight(LIGHT4, light4State, true, "LIGHT4"); });
-    server.on("/device/10/off", []() { setLight(LIGHT4, light4State, false, "LIGHT4"); });
+    server.on("/device/32/on", []() { setManualLight(LIGHT4, light4State, true, "LIGHT4"); });
+    server.on("/device/32/off", []() { setManualLight(LIGHT4, light4State, false, "LIGHT4"); });
+    server.on("/device/10/on", []() { setManualLight(LIGHT4, light4State, true, "LIGHT4"); });
+    server.on("/device/10/off", []() { setManualLight(LIGHT4, light4State, false, "LIGHT4"); });
 
     server.on("/device/21/on", openDoor);
     server.on("/device/21/off", closeDoor);
     server.on("/device/5/on", openDoor);
     server.on("/device/5/off", closeDoor);
+
+    server.on("/device/12/on", manualExtendClothesline);
+    server.on("/device/12/off", manualRetractClothesline);
+
+    server.on("/automatic-light/on", []() { setAutomaticLightMode(true); });
+    server.on("/automatic-light/off", []() { setAutomaticLightMode(false); });
+    server.on("/automatic-light/status", []() {
+        server.send(
+            200,
+            "application/json",
+            buildAutomaticStatusJson()
+        );
+    });
+
+    server.on("/automatic-clothes/on", []() { setAutomaticClothesMode(true); });
+    server.on("/automatic-clothes/off", []() { setAutomaticClothesMode(false); });
+    server.on("/automatic-clothes/status", []() {
+        server.send(
+            200,
+            "application/json",
+            buildAutomaticClothesStatusJson(
+                digitalRead(RAIN_SENSOR_PIN) == rainDetectedLevel
+            )
+        );
+    });
 }
+
+void buzzerSin(int pin){
+    buzzerActive = true;
+}
+
+void stopBuzzerSin() {
+    buzzerActive = false;
+    buzzerSinStep = 0;
+    ledcWriteTone(BUZZER_CHANNEL, 0);
+}
+
+void updateBuzzerSin(unsigned long now) {
+    if(!buzzerActive) {
+        return;
+    }
+
+    if(now - lastBuzzerStepMs < BUZZER_STEP_INTERVAL_MS) {
+        return;
+    }
+
+    lastBuzzerStepMs = now;
+
+    float rad = buzzerSinStep * 3.14 / 180;
+    int freq = 2000 + 800 * sin(rad);
+
+    ledcWriteTone(BUZZER_CHANNEL, freq);
+
+    buzzerSinStep++;
+
+    if(buzzerSinStep >= 180) {
+        buzzerSinStep = 0;
+    }
+}
+
 
 void setup() {
 
@@ -207,8 +523,12 @@ void setup() {
     */
 
     pinMode(BUZZER_PIN, OUTPUT);
+    ledcSetup(BUZZER_CHANNEL, 2000, BUZZER_RESOLUTION);
+    ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
+    ledcWriteTone(BUZZER_CHANNEL, 0);
+    pinMode(LIGHT_SENSOR_PIN, INPUT); 
+    pinMode(RAIN_SENSOR_PIN, INPUT_PULLUP);
 
-    digitalWrite(BUZZER_PIN, LOW);
 
     /*
         DHT SENSOR
@@ -261,6 +581,7 @@ void loop() {
     server.handleClient();
 
     unsigned long now = millis();
+    updateBuzzerSin(now);
 
     if(now - lastSensorReadMs < SENSOR_INTERVAL_MS) {
 
@@ -276,32 +597,47 @@ void loop() {
     int gasValue =
         analogRead(MQ2_PIN);
 
+    int lightValue =
+        analogRead(LIGHT_SENSOR_PIN);
+
+    int rainValue =
+        digitalRead(RAIN_SENSOR_PIN);
+
+    bool raining =
+        rainValue == rainDetectedLevel;
+
     float temperature =
         dht.readTemperature();
 
     float humidity =
         dht.readHumidity();
-    // ép xạ giá trị đọc được từ cảm biến DHT11 về 0 nếu có lỗi đọc dữ liệu (trả về NaN)
+
     if(isnan(temperature)) {
 
-    Serial.println(
-        "Temperature sensor error"
-    );
+        Serial.println(
+            "Temperature sensor error"
+        );
 
-    temperature = 0;
-    }  
-    
+        temperature = 0;
+    }
+
     if(isnan(humidity)) {
 
-    Serial.println(
-        "Humidity sensor error"
-    );
+        Serial.println(
+            "Humidity sensor error"
+        );
 
-    humidity = 0;
+        humidity = 0;
     }
 
     Serial.print("Gas: ");
     Serial.println(gasValue);
+
+    Serial.print("Light: ");
+    Serial.println(lightValue);
+
+    Serial.print("Rain: ");
+    Serial.println(raining ? "YES" : "NO");
 
     Serial.print("Temperature: ");
     Serial.println(temperature);
@@ -313,26 +649,41 @@ void loop() {
         GAS ALERT
     */
 
-    if(gasValue > maxGasValue) {
-
-        digitalWrite(
-            BUZZER_PIN,
-            HIGH
-        );
+    if(gasValue >= maxGasValue) {
+        buzzerSin(BUZZER_PIN);
 
         Serial.println(
             "WARNING: GAS DETECTED"
         );
 
     } else {
-
-        digitalWrite(
-            BUZZER_PIN,
-            LOW
-        );
+        stopBuzzerSin();
     }
 
+    /*
+        AUTOMATIC LIGHT CONTROL
+        This LDR reads high when dark and low when bright.
+    */
 
+    if(automaticLightMode) {
+
+        if(lightValue > darkLightValue && !automaticLightsOn) {
+
+            setAllLights(true);
+            Serial.println("AUTO: DARK - LIGHTS ON");
+
+        } else if(lightValue < brightLightValue && automaticLightsOn) {
+
+            setAllLights(false);
+            Serial.println("AUTO: BRIGHT - LIGHTS OFF");
+        }
+    }
+
+    /*
+        AUTOMATIC CLOTHESLINE CONTROL
+    */
+
+    handleAutomaticClothes(raining);
 
     /*
         SEND DATA TO FASTAPI
@@ -340,7 +691,42 @@ void loop() {
 
     if(WiFi.status() == WL_CONNECTED) {
 
-        sendEnvironmentData(gasValue, temperature, humidity);
+        if(now < sensorPostBackoffUntilMs) {
+
+            Serial.println("Sensor POST skipped during backend backoff");
+
+        } else {
+
+            bool posted = sendEnvironmentData(
+                gasValue,
+                lightValue,
+                rainValue,
+                raining,
+                temperature,
+                humidity
+            );
+
+            if(posted) {
+
+                failedSensorPostCount = 0;
+
+            } else {
+
+                failedSensorPostCount++;
+
+                if(failedSensorPostCount >= 3) {
+
+                    sensorPostBackoffUntilMs =
+                        millis() + SENSOR_POST_BACKOFF_MS;
+
+                    failedSensorPostCount = 0;
+
+                    Serial.println(
+                        "Backend slow. Sensor POST paused for 15 seconds"
+                    );
+                }
+            }
+        }
     }
 
 }

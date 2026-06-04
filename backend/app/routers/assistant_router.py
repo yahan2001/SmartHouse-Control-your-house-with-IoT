@@ -11,7 +11,7 @@ from app.schemas.assistant_schema import (
     VoiceCommandRequest,
     VoiceCommandResponse
 )
-from app.services.esp_service import send_command
+from app.services.esp_service import resolve_device_endpoint_pin, send_command
 from app.services.gemini_service import (
     GeminiCommandError,
     parse_device_audio_command,
@@ -213,7 +213,13 @@ async def _execute_parsed_command(
 
         try:
             for device in target_devices:
-                await send_command(device.pin, action)
+                endpoint_pin = resolve_device_endpoint_pin(
+                    device.pin,
+                    device.name,
+                    device.type,
+                    device.room
+                )
+                await send_command(endpoint_pin, action)
                 device.status = action == "on"
         except httpx.HTTPError as exc:
             raise HTTPException(
@@ -245,7 +251,13 @@ async def _execute_parsed_command(
         )
 
     try:
-        await send_command(device.pin, action)
+        endpoint_pin = resolve_device_endpoint_pin(
+            device.pin,
+            device.name,
+            device.type,
+            device.room
+        )
+        await send_command(endpoint_pin, action)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=504,
