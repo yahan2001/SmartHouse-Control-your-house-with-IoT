@@ -15,6 +15,8 @@ from app.schemas.device_schema import (
 )
 
 from app.services.esp_service import (
+    get_esp32_cam_ip,
+    get_esp32_cam_stream_url,
     get_automatic_clothes_status,
     get_automatic_light_status,
     get_automatic_yard_light_status,
@@ -152,6 +154,17 @@ async def get_devices(db: Session = Depends(get_db)):
     devices = await run_in_threadpool(lambda: db.query(Device).all())
 
     return devices
+
+
+@router.get("/camera")
+async def read_camera_config():
+
+    return {
+        "baseUrl": get_esp32_cam_ip(),
+        "streamUrl": get_esp32_cam_stream_url()
+    }
+
+
 @router.post("/{device_id}")
 
 async def control_device(

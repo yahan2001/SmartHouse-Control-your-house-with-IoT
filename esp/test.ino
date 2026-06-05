@@ -58,8 +58,8 @@ void getHMAC256(const byte* key, int keyLen, String data, byte* result) {
 }
 
 // ================= CẤU HÌNH MẠNG & AWS =================
-const char* ssid = "iPhone";
-const char* password = "12346789";
+const char* ssid = "TRAM 247 STUDY CAFE & WORKSPACE";
+const char* password = "tramloveyou";
 
 const char* AWS_IOT_ENDPOINT = "xxxxxx-ats.iot.ap-southeast-1.amazonaws.com"; // Thay bằng Endpoint thực tế
 const char* CREDENTIAL_ENDPOINT = "c1thecko6nl33d.credentials.iot.ap-southeast-1.amazonaws.com";
@@ -143,7 +143,7 @@ void setupCamera() {
   config.pixel_format = PIXFORMAT_JPEG;
   
   if(psramFound()){
-    config.frame_size = FRAMESIZE_VGA; // Đã sửa từ UXGA về VGA (640x480) để stream mượt mà, nhưng vẫn đủ nét cho Rekognition
+    config.frame_size = FRAMESIZE_UXGA; // Đã sửa từ UXGA về VGA (640x480) để stream mượt mà, nhưng vẫn đủ nét cho Rekognition
     config.jpeg_quality = 20; // Giảm chất lượng ảnh 1 chút để nhẹ băng thông
     config.fb_count = 2; // Tăng bộ đệm lên 2 để chạy song song mượt mà Livestream và Chụp ảnh AWS
   }
@@ -376,25 +376,30 @@ void uploadToS3(AWSCredentials creds, camera_fb_t * fb) {
 
 // ================= MJPEG STREAM SERVER (PORT 81) =================
 httpd_handle_t stream_httpd = NULL;
+static const char* STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=frame";
+static const char* STREAM_BOUNDARY = "\r\n--frame\r\n";
 
 esp_err_t stream_handler(httpd_req_t *req) {
   camera_fb_t * fb = NULL;
   esp_err_t res = ESP_OK;
-  char part_buf[64];
+  char part_buf[96];
 
   // Thiết lập chuẩn phân tách HTTP cho Video (MJPEG)
-  res = httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=123456789000000000000987654321");
+  res = httpd_resp_set_type(req, STREAM_CONTENT_TYPE);
   if(res != ESP_OK) return res;
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  httpd_resp_set_hdr(req, "Pragma", "no-cache");
 
   while(true) {
     fb = esp_camera_fb_get();
     if (!fb) continue;
     
     // Đóng gói từng khung hình đẩy đi liên tục (Stream)
-    size_t hlen = snprintf(part_buf, 64, "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", fb->len);
-    res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
+    res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
+    size_t hlen = snprintf(part_buf, sizeof(part_buf), "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", (unsigned int)fb->len);
+    if(res == ESP_OK) res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
     if(res == ESP_OK) res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
-    if(res == ESP_OK) res = httpd_resp_send_chunk(req, "\r\n--123456789000000000000987654321\r\n", 37);
     
     esp_camera_fb_return(fb);
     
@@ -442,6 +447,22 @@ void handleCapture() {
   esp_camera_fb_return(fb);
 }
 
+void handleCameraInfo() {
+  String baseUrl = "http://" + WiFi.localIP().toString();
+  String streamUrl = "http://" + WiFi.localIP().toString() + ":81/stream";
+  String captureUrl = baseUrl + "/capture";
+
+  DynamicJsonDocument doc(256);
+  doc["ip"] = WiFi.localIP().toString();
+  doc["baseUrl"] = baseUrl;
+  doc["streamUrl"] = streamUrl;
+  doc["captureUrl"] = captureUrl;
+
+  String response;
+  serializeJson(doc, response);
+  server.send(200, "application/json", response);
+}
+
 // ================= SETUP MẶC ĐỊNH =================
 void setup() {
   Serial.begin(115200);
@@ -460,7 +481,10 @@ void setup() {
   Serial.print("🌐 TRUY CẬP ĐỊA CHỈ NÀY ĐỂ XEM CAMERA: http://");
   Serial.println(WiFi.localIP());
 
+  setupCamera();
+
   server.on("/", handleRoot);
+  server.on("/camera", handleCameraInfo);
   server.on("/capture", handleCapture);
   server.begin();
   
@@ -498,7 +522,6 @@ void setup() {
     while (true);
   }
 
-  setupCamera();
 }
 
 // ================= VÒNG LẶP CHÍNH =================

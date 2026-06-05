@@ -10,9 +10,11 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
 ESP32_IP = os.getenv("ESP32_IP", "http://172.16.1.13")
+ESP32_CAM_IP = os.getenv("ESP32_CAM_IP", "http://172.16.1.13:81")
 ESP32_COMMAND_TIMEOUT_SECONDS = 4
 ESP32_STATUS_TIMEOUT_SECONDS = 1.5
 _latest_esp32_ip = ESP32_IP
+_latest_esp32_cam_ip = ESP32_CAM_IP
 
 CURRENT_ENDPOINT_PINS = {14, 21, 25, 26, 27, 32, 33}
 
@@ -28,6 +30,31 @@ def set_esp32_ip_from_host(host: str | None) -> None:
 
 def get_esp32_ip() -> str:
     return _latest_esp32_ip
+
+
+def set_esp32_cam_ip_from_host(host: str | None) -> None:
+    global _latest_esp32_cam_ip
+
+    if not host:
+        return
+
+    host = host.strip()
+    if not host:
+        return
+
+    if host.startswith("http://") or host.startswith("https://"):
+        _latest_esp32_cam_ip = host.rstrip("/")
+        return
+
+    _latest_esp32_cam_ip = f"http://{host}".rstrip("/")
+
+
+def get_esp32_cam_ip() -> str:
+    return _latest_esp32_cam_ip.rstrip("/")
+
+
+def get_esp32_cam_stream_url() -> str:
+    return f"{get_esp32_cam_ip()}/stream"
 
 
 def _device_text(
