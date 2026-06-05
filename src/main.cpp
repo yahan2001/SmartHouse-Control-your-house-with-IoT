@@ -9,8 +9,8 @@
     WIFI
 */
 
-const char* ssid = "TTHocLieuT1";
-const char* password = "hoclieut1";
+const char* ssid = "TRAM 247 STUDY CAFE & WORKSPACE";
+const char* password = "tramloveyou";
 
 
 /*
@@ -155,7 +155,7 @@ bool sendEnvironmentData(
 
     HTTPClient http;
 
-    String serverUrl ="http://10.10.58.135:8000/sensor-data/";//ip backend fastapi
+    String serverUrl ="http://172.16.0.206:8000/sensor-data/";//ip backend fastapi
 
     http.begin(serverUrl);
     http.setConnectTimeout(SENSOR_POST_CONNECT_TIMEOUT_MS);

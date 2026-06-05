@@ -138,6 +138,9 @@ export default function HomeScreen() {
   const [serverIp, setServerIp] = useState(getDefaultBackendIp);
   const [tempIp, setTempIp] = useState(getDefaultBackendIp);
   const [isIpModalOpen, setIsIpModalOpen] = useState(false);
+  const [doorPassword, setDoorPassword] = useState("");
+  const [doorPasswordConfirm, setDoorPasswordConfirm] = useState("");
+  const [isDoorPasswordSaving, setIsDoorPasswordSaving] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
   const [gas, setGas] = useState(0);
   const [light, setLight] = useState(0);
@@ -432,6 +435,38 @@ export default function HomeScreen() {
     } catch (error) {
       console.log("Error automatic yard light:", error);
       Alert.alert("Tự động", "Không bật/tắt được đèn sân tự động trên ESP32.");
+    }
+  };
+
+  const updateDoorPassword = async () => {
+    const password = doorPassword.trim();
+    const confirmation = doorPasswordConfirm.trim();
+
+    if (!/^\d{4,12}$/.test(password)) {
+      Alert.alert("Mat khau cua", "Mat khau phai gom 4-12 chu so.");
+      return;
+    }
+
+    if (password !== confirmation) {
+      Alert.alert("Mat khau cua", "Mat khau xac nhan khong khop.");
+      return;
+    }
+
+    try {
+      setIsDoorPasswordSaving(true);
+      await axios.post(
+        `${getApiUrl()}/door/password`,
+        { password },
+        { timeout: DEVICE_CONTROL_TIMEOUT_MS }
+      );
+      setDoorPassword("");
+      setDoorPasswordConfirm("");
+      Alert.alert("Mat khau cua", "Da cap nhat mat khau keypad.");
+    } catch (error) {
+      console.log("Error updating door password:", error);
+      Alert.alert("Mat khau cua", "Khong cap nhat duoc mat khau tren ESP cua.");
+    } finally {
+      setIsDoorPasswordSaving(false);
     }
   };
 
@@ -781,6 +816,55 @@ export default function HomeScreen() {
           thumbColor={isDark ? "#2563EB" : "#F8FAFC"}
         />
       </View>
+      <View style={[styles.passwordCard, isDark && styles.surfaceDark]}>
+        <View style={styles.passwordHeader}>
+          <View style={styles.themeIconWrap}>
+            <MaterialCommunityIcons name="form-textbox-password" size={18} color="#2563EB" />
+          </View>
+          <View style={styles.themeTextBlock}>
+            <Text style={[styles.themeTitle, isDark && styles.textDark]}>
+              Mat khau keypad cua
+            </Text>
+            <Text style={[styles.themeSubtitle, isDark && styles.mutedDark]}>
+              Dung phim # de xac nhan, phim * de xoa tren keypad
+            </Text>
+          </View>
+        </View>
+        <TextInput
+          value={doorPassword}
+          onChangeText={setDoorPassword}
+          style={styles.passwordInput}
+          placeholder="Mat khau moi"
+          placeholderTextColor="#64748B"
+          keyboardType="number-pad"
+          secureTextEntry
+          maxLength={12}
+        />
+        <TextInput
+          value={doorPasswordConfirm}
+          onChangeText={setDoorPasswordConfirm}
+          style={styles.passwordInput}
+          placeholder="Nhap lai mat khau"
+          placeholderTextColor="#64748B"
+          keyboardType="number-pad"
+          secureTextEntry
+          maxLength={12}
+        />
+        <TouchableOpacity
+          style={[styles.primaryButton, isDoorPasswordSaving && styles.disabledButton]}
+          onPress={updateDoorPassword}
+          disabled={isDoorPasswordSaving}
+        >
+          {isDoorPasswordSaving ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Ionicons name="keypad-outline" size={18} color="#FFFFFF" />
+          )}
+          <Text style={styles.primaryButtonText}>
+            {isDoorPasswordSaving ? "Dang luu..." : "Luu mat khau"}
+          </Text>
+        </TouchableOpacity>
+      </View>
       <TouchableOpacity
         style={styles.primaryButton}
         onPress={() => {
@@ -1030,7 +1114,11 @@ const styles = StyleSheet.create({
   themeTextBlock: { flex: 1 },
   themeTitle: { color: "#0F172A", fontSize: 14, fontWeight: "900" },
   themeSubtitle: { color: "#64748B", fontSize: 11, fontWeight: "700", marginTop: 2 },
+  passwordCard: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 8, borderWidth: 1, elevation: 2, gap: 10, marginBottom: 14, padding: 12, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.06, shadowRadius: 12 },
+  passwordHeader: { alignItems: "center", flexDirection: "row", gap: 12 },
+  passwordInput: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 8, borderWidth: 1, color: "#0F172A", fontSize: 14, fontWeight: "700", paddingHorizontal: 12, paddingVertical: 11 },
   primaryButton: { alignItems: "center", backgroundColor: "#2563EB", borderRadius: 8, flexDirection: "row", gap: 8, justifyContent: "center", marginTop: 4, paddingVertical: 13 },
+  disabledButton: { opacity: 0.7 },
   primaryButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
   bottomNav: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderTopWidth: 1, bottom: 0, elevation: 12, flexDirection: "row", height: 76, justifyContent: "space-around", left: 0, paddingBottom: 8, position: "absolute", right: 0, shadowColor: "#0F172A", shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.08, shadowRadius: 14 },
   bottomNavItem: { alignItems: "center", borderRadius: 8, flex: 1, gap: 4, justifyContent: "center", marginHorizontal: 4, paddingVertical: 7 },

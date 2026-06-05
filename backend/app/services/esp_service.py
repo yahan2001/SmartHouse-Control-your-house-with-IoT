@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
-ESP32_IP = os.getenv("ESP32_IP", "http://10.10.59.151")
+ESP32_IP = os.getenv("ESP32_IP", "http://172.16.1.13")
 ESP32_COMMAND_TIMEOUT_SECONDS = 4
 ESP32_STATUS_TIMEOUT_SECONDS = 1.5
 _latest_esp32_ip = ESP32_IP
