@@ -39,6 +39,7 @@ const unsigned long SENSOR_POST_CONNECT_TIMEOUT_MS = 1000;
 const unsigned long SENSOR_POST_READ_TIMEOUT_MS = 1500;
 const unsigned long SENSOR_POST_BACKOFF_MS = 15000;
 const unsigned long SERVO_MOVE_MS = 1500;
+const unsigned long BUTTON_DEBOUNCE_MS = 80;
 const int SERVO_MIN_ANGLE = 0;
 const int SERVO_MAX_ANGLE = 90;
 unsigned long lastSensorReadMs = 0;
@@ -57,6 +58,10 @@ unsigned long lastBuzzerStepMs = 0;
 #define LIGHT3 27
 #define LIGHT4 32
 #define YARD_LIGHT_PIN 33
+#define BTN_LIGHT1 13
+#define BTN_LIGHT2 16
+#define BTN_LIGHT3 17
+#define BTN_LIGHT4 4
 #define SERVO_PIN 21
 #define CLOTHES_SERVO_PIN 14
 #define MQ2_PIN 34
@@ -73,6 +78,10 @@ bool light1State = false;
 bool light2State = false;
 bool light3State = false;
 bool light4State = false;
+bool lastBtnLight1State = HIGH;
+bool lastBtnLight2State = HIGH;
+bool lastBtnLight3State = HIGH;
+bool lastBtnLight4State = HIGH;
 bool automaticLightMode = false;
 bool automaticLightsOn = false;
 bool yardLightState = false;
@@ -82,6 +91,10 @@ bool automaticClothesMode = true;
 int clothesServoPos = -1;
 bool doorServoAttached = false;
 unsigned long doorServoDetachAtMs = 0;
+unsigned long lastBtnLight1ChangeMs = 0;
+unsigned long lastBtnLight2ChangeMs = 0;
+unsigned long lastBtnLight3ChangeMs = 0;
+unsigned long lastBtnLight4ChangeMs = 0;
 
 String buildAutomaticStatusJson();
 String buildAutomaticYardLightStatusJson(bool motionDetected, int lightValue);
@@ -294,6 +307,99 @@ void setAllLights(bool nextState) {
     applyLight(LIGHT3, light3State, nextState, "LIGHT3");
     applyLight(LIGHT4, light4State, nextState, "LIGHT4");
     automaticLightsOn = nextState;
+}
+
+void toggleManualLightFromButton(
+    int lightPin,
+    bool& lightState,
+    const char* deviceName
+) {
+
+    automaticLightMode = false;
+    applyLight(lightPin, lightState, !lightState, deviceName);
+    automaticLightsOn =
+        light1State &&
+        light2State &&
+        light3State &&
+        light4State;
+
+    Serial.println("Automatic light mode OFF by wall button");
+}
+
+void handleLightButton(
+    int buttonPin,
+    bool& lastButtonState,
+    unsigned long& lastChangeMs,
+    int lightPin,
+    bool& lightState,
+    const char* deviceName,
+    unsigned long now
+) {
+
+    bool currentState = digitalRead(buttonPin);
+
+    if(currentState == lastButtonState) {
+        return;
+    }
+
+    if(now - lastChangeMs < BUTTON_DEBOUNCE_MS) {
+        return;
+    }
+
+    lastChangeMs = now;
+
+    if(lastButtonState == HIGH && currentState == LOW) {
+        toggleManualLightFromButton(
+            lightPin,
+            lightState,
+            deviceName
+        );
+    }
+
+    lastButtonState = currentState;
+}
+
+void handleLightButtons(unsigned long now) {
+
+    handleLightButton(
+        BTN_LIGHT1,
+        lastBtnLight1State,
+        lastBtnLight1ChangeMs,
+        LIGHT1,
+        light1State,
+        "LIGHT1",
+        now
+    );
+
+    handleLightButton(
+        BTN_LIGHT2,
+        lastBtnLight2State,
+        lastBtnLight2ChangeMs,
+        LIGHT2,
+        light2State,
+        "LIGHT2",
+        now
+    );
+
+    handleLightButton(
+        BTN_LIGHT3,
+        lastBtnLight3State,
+        lastBtnLight3ChangeMs,
+        LIGHT3,
+        light3State,
+        "LIGHT3",
+        now
+    );
+
+    handleLightButton(
+        BTN_LIGHT4,
+        lastBtnLight4State,
+        lastBtnLight4ChangeMs,
+        LIGHT4,
+        light4State,
+        "LIGHT4",
+        now
+    );
 }
 
 void applyYardLight(bool nextState) {
@@ -661,6 +767,10 @@ void setup() {
     pinMode(LIGHT3, OUTPUT);
     pinMode(LIGHT4, OUTPUT);
     pinMode(YARD_LIGHT_PIN, OUTPUT);
+    pinMode(BTN_LIGHT1, INPUT_PULLUP);
+    pinMode(BTN_LIGHT2, INPUT_PULLUP);
+    pinMode(BTN_LIGHT3, INPUT_PULLUP);
+    pinMode(BTN_LIGHT4, INPUT_PULLUP);
 
     digitalWrite(LIGHT1, LOW);
     digitalWrite(LIGHT2, LOW);
@@ -746,6 +856,7 @@ void loop() {
     unsigned long now = millis();
     updateDoorServo(now);
     updateBuzzerSin(now);
+    handleLightButtons(now);
 
     if(now - lastSensorReadMs < SENSOR_INTERVAL_MS) {
 
