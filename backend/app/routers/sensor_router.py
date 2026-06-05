@@ -17,7 +17,8 @@ LIGHT_STATUS_PINS = {
     "light2": (26, 6),
     "light3": (27, 7),
     "light4": (32, 10),
-    "clothesline": (12,),
+    "clothesline": (14,),
+    "yardLight": (33,),
 }
 
 router = APIRouter(
@@ -30,13 +31,23 @@ async def send_gas_alert_background(gas_value: int):
     db = SessionLocal()
 
     try:
-        await send_gas_alert_if_needed(
+        sent = await send_gas_alert_if_needed(
             db,
             gas_value,
             MAX_GAS_VALUE
         )
+        print(
+            "Gas alert checked:",
+            {
+                "gas": gas_value,
+                "threshold": MAX_GAS_VALUE,
+                "sent": sent
+            }
+        )
     except httpx.HTTPError as exc:
         print("Push notification failed:", exc)
+    except Exception as exc:
+        print("Push notification failed unexpectedly:", exc)
     finally:
         db.close()
 
@@ -65,7 +76,8 @@ async def sync_light_status_background(status_payload: dict):
                 )
             )
 
-        await run_in_threadpool(db.commit)
+            await run_in_threadpool(db.commit)
+
     except OperationalError as exc:
         await run_in_threadpool(db.rollback)
         print("Device status sync skipped:", exc)
@@ -87,6 +99,8 @@ async def save_sensor_data(
         light=data.light,
         rain=data.rain,
         raining=data.raining,
+        pir=data.pir,
+        motionDetected=data.motionDetected,
         temperature=data.temperature,
         humidity=data.humidity
     )

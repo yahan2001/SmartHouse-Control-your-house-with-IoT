@@ -6,6 +6,8 @@ class GasRequest(BaseModel):
     light: int = 0
     rain: int = 0
     raining: bool = False
+    pir: int = 0
+    motionDetected: bool = False
     temperature: float
     humidity: float
     light1: bool | None = None
@@ -13,3 +15,4 @@ class GasRequest(BaseModel):
     light3: bool | None = None
     light4: bool | None = None
     clothesline: bool | None = None
+    yardLight: bool | None = None

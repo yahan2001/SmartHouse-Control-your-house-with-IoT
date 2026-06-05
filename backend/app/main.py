@@ -40,6 +40,19 @@ with engine.begin() as connection:
             text("ALTER TABLE sensor_data ADD COLUMN raining BOOLEAN DEFAULT FALSE")
         )
 
+    if "pir" not in columns:
+        connection.execute(
+            text("ALTER TABLE sensor_data ADD COLUMN pir INT DEFAULT 0")
+        )
+
+    if "motionDetected" not in columns:
+        connection.execute(
+            text(
+                "ALTER TABLE sensor_data "
+                "ADD COLUMN motionDetected BOOLEAN DEFAULT FALSE"
+            )
+        )
+
 app.include_router(router)
 app.include_router(sensor_router)
 app.include_router(assistant_router)

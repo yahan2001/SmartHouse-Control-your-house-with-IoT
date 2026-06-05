@@ -17,9 +17,9 @@ async def send_push_notifications(
     title: str,
     body: str,
     data: dict | None = None
-) -> None:
+) -> dict | list | None:
     if not tokens:
-        return
+        return None
 
     messages = [
         {
@@ -41,6 +41,11 @@ async def send_push_notifications(
 
     response.raise_for_status()
 
+    result = response.json()
+    print("Expo push response:", result)
+
+    return result
+
 
 async def send_gas_alert_if_needed(
     db: Session,
@@ -49,7 +54,7 @@ async def send_gas_alert_if_needed(
 ) -> bool:
     global _last_gas_alert_at
 
-    if gas_value <= max_gas_value:
+    if gas_value < max_gas_value:
         return False
 
     now = time.time()
@@ -66,16 +71,22 @@ async def send_gas_alert_if_needed(
         ]
     )
 
-    await send_push_notifications(
+    if not tokens:
+        print("Gas alert skipped: no active push notification tokens")
+        return False
+
+    result = await send_push_notifications(
         tokens,
-        "Canh bao khi gas",
-        f"Gia tri gas dang nguy hiem: {gas_value}. Hay kiem tra ngay.",
+        "Cảnh báo khí gas",
+        f"Giá trị gas đang nguy hiểm: {gas_value}. Hãy kiểm tra ngay.",
         {
             "type": "gas_alert",
             "gas": gas_value,
             "threshold": max_gas_value
         }
     )
+
+    print("Gas alert sent:", result)
 
     _last_gas_alert_at = now
     return True

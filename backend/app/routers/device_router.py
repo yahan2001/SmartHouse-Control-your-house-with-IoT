@@ -17,10 +17,12 @@ from app.schemas.device_schema import (
 from app.services.esp_service import (
     get_automatic_clothes_status,
     get_automatic_light_status,
+    get_automatic_yard_light_status,
     resolve_device_endpoint_pin,
     send_command,
     set_automatic_clothes,
-    set_automatic_light
+    set_automatic_light,
+    set_automatic_yard_light
 )
 
 router = APIRouter(
@@ -33,6 +35,7 @@ LIGHT_STATUS_PINS = {
     "light2": (26, 6),
     "light3": (27, 7),
     "light4": (32, 10),
+    "yardLight": (33,),
 }
 AUTO_DARK_LIGHT_VALUE = 3000
 AUTO_BRIGHT_LIGHT_VALUE = 2900
@@ -46,11 +49,16 @@ def sync_light_statuses(db: Session, status_payload: dict):
         if status is None:
             continue
 
+        next_status = bool(status)
+
         (
             db.query(Device)
-            .filter(Device.pin.in_(pins))
+            .filter(
+                Device.pin.in_(pins),
+                Device.status != next_status
+            )
             .update(
-                {Device.status: bool(status)},
+                {Device.status: next_status},
                 synchronize_session=False
             )
         )
@@ -87,13 +95,17 @@ def sync_inferred_automatic_light_statuses(db: Session, status_payload: dict):
 
     all_light_pins = [
         pin
-        for pins in LIGHT_STATUS_PINS.values()
+        for field_name, pins in LIGHT_STATUS_PINS.items()
+        if field_name != "yardLight"
         for pin in pins
     ]
 
     (
         db.query(Device)
-        .filter(Device.pin.in_(all_light_pins))
+        .filter(
+            Device.pin.in_(all_light_pins),
+            Device.status != inferred_status
+        )
         .update(
             {Device.status: inferred_status},
             synchronize_session=False
@@ -107,6 +119,31 @@ def is_light_device(device: Device) -> bool:
     device_name = (device.name or "").lower()
 
     return "light" in device_type or "light" in device_name
+
+
+def is_yard_light_device(device: Device) -> bool:
+
+    device_type = (device.type or "").lower()
+    device_name = (device.name or "").lower()
+    device_room = (device.room or "").lower()
+    text = f"{device_name} {device_type} {device_room}"
+
+    return (
+        device.pin == 33
+        or (
+            ("light" in device_type or "light" in device_name)
+            and (
+                "yard" in text
+                or "outdoor" in text
+                or "garden" in text
+                or "san" in text
+                or "sân" in text
+                or "balcony" in text
+                or "ban công" in text
+                or "ban cong" in text
+            )
+        )
+    )
 
 
 @router.get("/", response_model=list[DeviceResponse])
@@ -142,15 +179,26 @@ async def control_device(
         )
 
     automatic = None
+    automatic_yard = None
+    manually_controls_yard_light = is_yard_light_device(device)
+    manually_controls_light = is_light_device(device)
 
-    if is_light_device(device):
+    if manually_controls_yard_light:
+        try:
+            auto_result = await set_automatic_yard_light("off")
+        except httpx.HTTPError:
+            auto_result = None
+
+        if isinstance(auto_result, dict):
+            automatic_yard = auto_result.get("automatic", False)
+
+    elif manually_controls_light:
         try:
             auto_result = await set_automatic_light("off")
         except httpx.HTTPError:
             auto_result = None
 
         if isinstance(auto_result, dict):
-            sync_light_statuses(db, auto_result)
             automatic = auto_result.get("automatic", False)
 
     endpoint_pin = resolve_device_endpoint_pin(
@@ -187,7 +235,8 @@ async def control_device(
     return {
         "message": "success",
         "status": status,
-        "automatic": automatic
+        "automatic": automatic,
+        "automaticYard": automatic_yard
     }
 
 
@@ -241,6 +290,57 @@ async def read_automatic_light_status():
     }
 
 
+@router.post("/automatic-yard-light/mode")
+async def control_automatic_yard_light(
+    body: ControlRequest,
+    db: Session = Depends(get_db)
+):
+
+    if body.action not in ("on", "off"):
+        raise HTTPException(
+            status_code=400,
+            detail="Action must be 'on' or 'off'"
+        )
+
+    try:
+        result = await set_automatic_yard_light(body.action)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="ESP32 did not respond"
+        ) from exc
+
+    sync_light_statuses(db, result)
+    await run_in_threadpool(db.commit)
+
+    return {
+        "message": "success",
+        "automatic": bool(result.get("automatic")),
+        "motionDetected": result.get("motionDetected"),
+        "dark": result.get("dark"),
+        "yardLight": result.get("yardLight")
+    }
+
+
+@router.get("/automatic-yard-light/status")
+async def read_automatic_yard_light_status():
+
+    try:
+        result = await get_automatic_yard_light_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="ESP32 did not respond"
+        ) from exc
+
+    return {
+        "automatic": bool(result.get("automatic")),
+        "motionDetected": result.get("motionDetected"),
+        "dark": result.get("dark"),
+        "yardLight": result.get("yardLight")
+    }
+
+
 @router.post("/automatic-clothes/mode")
 async def control_automatic_clothes(
     body: ControlRequest,
@@ -262,11 +362,16 @@ async def control_automatic_clothes(
         ) from exc
 
     if result.get("clothesline") is not None:
+        clothesline_status = bool(result.get("clothesline"))
+
         (
             db.query(Device)
-            .filter(Device.pin == 12)
+            .filter(
+                Device.pin == 14,
+                Device.status != clothesline_status
+            )
             .update(
-                {Device.status: bool(result.get("clothesline"))},
+                {Device.status: clothesline_status},
                 synchronize_session=False
             )
         )

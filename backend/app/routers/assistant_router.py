@@ -98,7 +98,7 @@ def _parse_local_command(command: str, devices: list[Device]) -> dict | None:
         "nha bep": ("nha bep", "bep", "kitchen"),
         "phong tam": ("phong tam", "bathroom", "bath room"),
         "cua vao": ("cua vao", "cua", "door", "entrance"),
-        "ban cong": ("ban cong", "balcony"),
+        "san nha": ("san nha", "san", "yard", "outdoor", "garden", "ban cong", "balcony"),
     }
 
     requested_rooms = [

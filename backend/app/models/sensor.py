@@ -16,5 +16,7 @@ class SensorData(Base):
     light = Column(Integer, default=0)
     rain = Column(Integer, default=0)
     raining = Column(Boolean, default=False)
+    pir = Column(Integer, default=0)
+    motionDetected = Column(Boolean, default=False)
     temperature = Column(Float)
     humidity = Column(Float)

@@ -8,6 +8,7 @@ from app.schemas.notification_schema import (
     PushTokenRequest,
     PushTokenResponse
 )
+from app.services.notification_service import send_push_notifications
 
 router = APIRouter(
     prefix="/notifications",
@@ -54,3 +55,43 @@ async def register_push_token(
     return PushTokenResponse(
         message="registered"
     )
+
+
+@router.post("/test")
+async def send_test_notification(
+    db: Session = Depends(get_db)
+):
+
+    tokens = await run_in_threadpool(
+        lambda: [
+            item.token
+            for item in db.query(NotificationToken)
+            .filter(NotificationToken.is_active == True)
+            .all()
+        ]
+    )
+
+    if not tokens:
+        raise HTTPException(
+            status_code=404,
+            detail="No active push notification tokens"
+        )
+
+    try:
+        result = await send_push_notifications(
+            tokens,
+            "Lumina Home",
+            "Thông báo thử nghiệm từ backend.",
+            {"type": "test_notification"}
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Expo push failed: {exc}"
+        ) from exc
+
+    return {
+        "message": "sent",
+        "tokens": len(tokens),
+        "expo": result
+    }
