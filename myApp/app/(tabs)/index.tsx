@@ -605,7 +605,6 @@ export default function HomeScreen() {
         </View>
         <View style={styles.homeIntroBottomRow}>
           <View>
-            <Text style={styles.greetingText}>Chào Minh!</Text>
             <Text style={styles.homeHintText}>Hệ thống đang theo dõi ngôi nhà.</Text>
           </View>
           <Text style={styles.weatherDescText}>Kết nối LAN</Text>
