@@ -12,5 +12,6 @@ backend/venv/
 !.env.example
 !**/.env.example
 
-# local ML model cache
-backend/.deepface/
+
+# npm cache
+myApp/.npm-cache/
