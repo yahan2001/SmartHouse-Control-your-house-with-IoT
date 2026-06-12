@@ -11,7 +11,7 @@ from app.schemas.sensor_schema import GasRequest
 from app.services.esp_service import set_esp32_ip_from_host
 from app.services.notification_service import send_gas_alert_if_needed
 
-MAX_GAS_VALUE = 1500
+MAX_GAS_VALUE = 3500
 LIGHT_STATUS_PINS = {
     "light1": (25, 2),
     "light2": (26, 6),

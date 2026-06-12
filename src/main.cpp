@@ -9,8 +9,8 @@
     WIFI
 */
 
-const char* ssid = "TRAM 247 STUDY CAFE & WORKSPACE";
-const char* password = "tramloveyou";
+const char* ssid = "HAHA";
+const char* password = "12345604";
 
 
 /*
@@ -30,7 +30,7 @@ Servo clothesServo;
     GPIO ESP32 DevKit/WROOM
     Avoid GPIO 6-11 because they are used by onboard flash.
 */
-int maxGasValue = 1500;
+int maxGasValue = 3500;
 int darkLightValue = 3000;
 int brightLightValue = 2900;
 int rainDetectedLevel = LOW;
@@ -86,7 +86,7 @@ bool automaticLightMode = false;
 bool automaticLightsOn = false;
 bool yardLightState = false;
 bool automaticYardLightMode = true;
-bool clotheslineExtended = true;
+bool clotheslineExtended = false;
 bool automaticClothesMode = true;
 int clothesServoPos = -1;
 bool doorServoAttached = false;
@@ -95,6 +95,7 @@ unsigned long lastBtnLight1ChangeMs = 0;
 unsigned long lastBtnLight2ChangeMs = 0;
 unsigned long lastBtnLight3ChangeMs = 0;
 unsigned long lastBtnLight4ChangeMs = 0;
+unsigned long ignoreLightButtonsUntilMs = 0;
 
 String buildAutomaticStatusJson();
 String buildAutomaticYardLightStatusJson(bool motionDetected, int lightValue);
@@ -155,7 +156,7 @@ bool sendEnvironmentData(
 
     HTTPClient http;
 
-    String serverUrl ="http://172.16.0.206:8000/sensor-data/";//ip backend fastapi
+    String serverUrl ="http://172.20.10.2:8000/sensor-data/";//ip backend fastapi
 
     http.begin(serverUrl);
     http.setConnectTimeout(SENSOR_POST_CONNECT_TIMEOUT_MS);
@@ -223,6 +224,10 @@ bool sendEnvironmentData(
 
     jsonData += "\"yardLight\":";
     jsonData += yardLightState ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"automaticIndoor\":";
+    jsonData += automaticLightMode ? "true" : "false";
 
     jsonData += "}";
 
@@ -289,6 +294,7 @@ void setManualLight(
 ) {
 
     automaticLightMode = false;
+    ignoreLightButtonsUntilMs = millis() + 1000;
     applyLight(pin, state, nextState, deviceName);
 
     Serial.println("Automatic light mode OFF by manual control");
@@ -307,6 +313,21 @@ void setAllLights(bool nextState) {
     applyLight(LIGHT3, light3State, nextState, "LIGHT3");
     applyLight(LIGHT4, light4State, nextState, "LIGHT4");
     automaticLightsOn = nextState;
+}
+
+void setManualAllLights(bool nextState) {
+
+    automaticLightMode = false;
+    ignoreLightButtonsUntilMs = millis() + 1000;
+    setAllLights(nextState);
+
+    Serial.println("Automatic light mode OFF by all lights control");
+
+    server.send(
+        200,
+        "application/json",
+        buildAutomaticStatusJson()
+    );
 }
 
 void toggleManualLightFromButton(
@@ -360,6 +381,14 @@ void handleLightButton(
 }
 
 void handleLightButtons(unsigned long now) {
+
+    if(now < ignoreLightButtonsUntilMs) {
+        lastBtnLight1State = digitalRead(BTN_LIGHT1);
+        lastBtnLight2State = digitalRead(BTN_LIGHT2);
+        lastBtnLight3State = digitalRead(BTN_LIGHT3);
+        lastBtnLight4State = digitalRead(BTN_LIGHT4);
+        return;
+    }
 
     handleLightButton(
         BTN_LIGHT1,
@@ -474,6 +503,14 @@ String buildAutomaticStatusJson() {
 
     jsonData += "\"light4\":";
     jsonData += light4State ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"automaticYard\":";
+    jsonData += automaticYardLightMode ? "true" : "false";
+    jsonData += ",";
+
+    jsonData += "\"yardLight\":";
+    jsonData += yardLightState ? "true" : "false";
 
     jsonData += "}";
 
@@ -513,7 +550,7 @@ void setAutomaticYardLightMode(bool enabled) {
 
 void openDoor() {
 
-    moveDoorServo(SERVO_MIN_ANGLE);
+    moveDoorServo(SERVO_MAX_ANGLE);
 
     Serial.println("Door Open");
 
@@ -526,7 +563,7 @@ void openDoor() {
 
 void closeDoor() {
 
-    moveDoorServo(SERVO_MAX_ANGLE);
+    moveDoorServo(SERVO_MIN_ANGLE);
 
     Serial.println("Door Close");
 
@@ -559,7 +596,7 @@ String buildAutomaticClothesStatusJson(bool raining) {
 
 void extendClothesline() {
 
-    moveClothesServo(SERVO_MIN_ANGLE);
+    moveClothesServo(SERVO_MAX_ANGLE);
     clotheslineExtended = true;
 
     Serial.println("Clothesline Extended");
@@ -567,7 +604,7 @@ void extendClothesline() {
 
 void retractClothesline() {
 
-    moveClothesServo(SERVO_MAX_ANGLE);
+    moveClothesServo(SERVO_MIN_ANGLE);
     clotheslineExtended = false;
 
     Serial.println("Clothesline Retracted");
@@ -652,6 +689,9 @@ void handleAutomaticYardLight(int lightValue, bool motionDetected) {
 }
 
 void registerDeviceRoutes() {
+
+    server.on("/lights/all/on", []() { setManualAllLights(true); });
+    server.on("/lights/all/off", []() { setManualAllLights(false); });
 
     server.on("/device/25/on", []() { setManualLight(LIGHT1, light1State, true, "LIGHT1"); });
     server.on("/device/25/off", []() { setManualLight(LIGHT1, light1State, false, "LIGHT1"); });
@@ -772,6 +812,11 @@ void setup() {
     pinMode(BTN_LIGHT3, INPUT_PULLUP);
     pinMode(BTN_LIGHT4, INPUT_PULLUP);
 
+    lastBtnLight1State = digitalRead(BTN_LIGHT1);
+    lastBtnLight2State = digitalRead(BTN_LIGHT2);
+    lastBtnLight3State = digitalRead(BTN_LIGHT3);
+    lastBtnLight4State = digitalRead(BTN_LIGHT4);
+
     digitalWrite(LIGHT1, LOW);
     digitalWrite(LIGHT2, LOW);
     digitalWrite(LIGHT3, LOW);
@@ -788,7 +833,7 @@ void setup() {
 
     clothesServo.setPeriodHertz(50);
     clothesServo.attach(CLOTHES_SERVO_PIN, 500, 2400);
-    moveClothesServo(SERVO_MAX_ANGLE);
+    moveClothesServo(SERVO_MIN_ANGLE);
 
     /*
         BUZZER

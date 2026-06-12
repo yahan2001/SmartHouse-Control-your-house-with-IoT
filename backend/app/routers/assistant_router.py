@@ -11,7 +11,14 @@ from app.schemas.assistant_schema import (
     VoiceCommandRequest,
     VoiceCommandResponse
 )
-from app.services.esp_service import resolve_device_endpoint_pin, send_command
+from app.services.esp_service import (
+    resolve_device_endpoint_pin,
+    send_command,
+    set_all_indoor_lights,
+    set_automatic_clothes,
+    set_automatic_light,
+    set_automatic_yard_light
+)
 from app.services.gemini_service import (
     GeminiCommandError,
     parse_device_audio_command,
@@ -22,6 +29,8 @@ router = APIRouter(
     prefix="/assistant",
     tags=["Assistant"]
 )
+
+INDOOR_LIGHT_ENDPOINT_PINS = {25, 26, 27, 32}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -48,40 +57,88 @@ def _normalize_text(value: str | None) -> str:
     return text.replace("đ", "d").strip()
 
 
+def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(phrase in text for phrase in phrases)
+
+
 def _parse_local_command(command: str, devices: list[Device]) -> dict | None:
     normalized_command = _normalize_text(command)
+    action_text = normalized_command.replace("che do tu dong", "")
+    action_text = action_text.replace("tu dong", "")
+    action_text = action_text.replace("automatic", "")
 
-    if any(word in normalized_command for word in ("bat", "mo", "on")):
-        action = "on"
-    elif any(word in normalized_command for word in ("tat", "dong", "off")):
+    if _contains_any(action_text, ("tat", "dong", "thu", "keo vao", "off")):
         action = "off"
+    elif _contains_any(action_text, ("bat", "mo", "keo ra", "on")):
+        action = "on"
     else:
         return None
 
     wants_all = any(
         phrase in normalized_command
-        for phrase in ("tat ca", "toan bo", "het")
+        for phrase in (
+            "tat ca",
+            "toan bo",
+            "het",
+            "4 den",
+            "bon den",
+            "cac den trong nha",
+            "den trong nha"
+        )
     )
     wants_light = any(
         word in normalized_command
         for word in ("den", "light")
     )
+    wants_automation = _contains_any(
+        normalized_command,
+        ("tu dong", "auto", "automatic", "che do tu dong")
+    )
+    wants_yard = _contains_any(
+        normalized_command,
+        ("san", "san nha", "ngoai troi", "yard", "garden", "outdoor")
+    )
+    wants_clothesline = _contains_any(
+        normalized_command,
+        (
+            "phoi",
+            "gian phoi",
+            "day phoi",
+            "quan ao",
+            "do phoi",
+            "clothes",
+            "clothesline",
+            "laundry"
+        )
+    )
+
+    if wants_automation:
+        automation = None
+
+        if wants_clothesline:
+            automation = "clothes"
+        elif wants_yard:
+            automation = "yard_light"
+        elif wants_light:
+            automation = "light"
+
+        if automation:
+            return {
+                "action": action,
+                "automation": automation,
+                "confidence": 0.95,
+                "message": "Da hieu lenh dieu khien che do tu dong."
+            }
 
     if wants_all and wants_light:
         light_devices = [
             device for device in devices
-            if "den" in " ".join(
-                [
-                    _normalize_text(device.name),
-                    _normalize_text(device.type),
-                ]
-            )
-            or "light" in " ".join(
-                [
-                    _normalize_text(device.name),
-                    _normalize_text(device.type),
-                ]
-            )
+            if resolve_device_endpoint_pin(
+                device.pin,
+                device.name,
+                device.type,
+                device.room
+            ) in INDOOR_LIGHT_ENDPOINT_PINS
         ]
 
         if light_devices:
@@ -91,6 +148,14 @@ def _parse_local_command(command: str, devices: list[Device]) -> dict | None:
                 "confidence": 0.95,
                 "message": "Da hieu lenh dieu khien tat ca den."
             }
+
+    if wants_all:
+        return {
+            "action": action,
+            "device_ids": [device.id for device in devices],
+            "confidence": 0.9,
+            "message": "Da hieu lenh dieu khien tat ca thiet bi."
+        }
 
     room_aliases = {
         "phong khach": ("phong khach", "living room", "living"),
@@ -123,8 +188,16 @@ def _parse_local_command(command: str, devices: list[Device]) -> dict | None:
             room for room in requested_rooms
             if room in device_text
         ]
+        special_pin_match = (
+            (wants_clothesline and device.pin == 14)
+            or (wants_yard and device.pin == 33)
+            or (
+                _contains_any(normalized_command, ("cua", "door", "cong"))
+                and device.pin == 21
+            )
+        )
 
-        if requested_rooms and not room_matches:
+        if requested_rooms and not room_matches and not special_pin_match:
             continue
 
         for token in normalized_command.split():
@@ -143,6 +216,35 @@ def _parse_local_command(command: str, devices: list[Device]) -> dict | None:
             score += 3
         if "tv" in normalized_command and "tv" in device_text:
             score += 3
+        if wants_clothesline and _contains_any(
+            device_text,
+            (
+                "phoi",
+                "gian phoi",
+                "day phoi",
+                "quan ao",
+                "clothes",
+                "clothesline",
+                "laundry"
+            )
+        ):
+            score += 8
+        if wants_clothesline and device.pin == 14:
+            score += 8
+        if wants_yard and _contains_any(
+            device_text,
+            ("san", "yard", "outdoor", "garden", "ngoai troi")
+        ):
+            score += 5
+        if wants_yard and device.pin == 33:
+            score += 6
+        if _contains_any(normalized_command, ("cua", "door", "cong")) and _contains_any(
+            device_text,
+            ("cua", "door", "entrance", "cong")
+        ):
+            score += 8
+        if _contains_any(normalized_command, ("cua", "door", "cong")) and device.pin == 21:
+            score += 8
 
         score += len(room_matches) * 6
 
@@ -189,6 +291,39 @@ async def _execute_parsed_command(
     action = parsed.get("action")
     device_id = parsed.get("device_id")
     device_ids = parsed.get("device_ids")
+    automation = parsed.get("automation")
+
+    if action in ("on", "off") and automation:
+        automation_handlers = {
+            "light": set_automatic_light,
+            "clothes": set_automatic_clothes,
+            "yard_light": set_automatic_yard_light
+        }
+        handler = automation_handlers.get(str(automation))
+
+        if not handler:
+            return VoiceCommandResponse(
+                message="Khong hieu che do tu dong can dieu khien.",
+                command=command
+            )
+
+        try:
+            result = await handler(action)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail="ESP32 did not respond"
+            ) from exc
+
+        return VoiceCommandResponse(
+            message=(
+                f"Da {'bat' if action == 'on' else 'tat'} "
+                "che do tu dong."
+            ),
+            command=command,
+            action=action,
+            status=bool(result.get("automatic"))
+        )
 
     if action not in ("on", "off") or not (device_id or device_ids):
         return VoiceCommandResponse(
@@ -200,9 +335,10 @@ async def _execute_parsed_command(
         )
 
     if device_ids:
+        target_ids = [int(id_value) for id_value in device_ids]
         target_devices = [
             item for item in devices
-            if item.id in [int(id_value) for id_value in device_ids]
+            if item.id in target_ids
         ]
 
         if not target_devices:
@@ -212,13 +348,37 @@ async def _execute_parsed_command(
             )
 
         try:
-            for device in target_devices:
-                endpoint_pin = resolve_device_endpoint_pin(
-                    device.pin,
-                    device.name,
-                    device.type,
-                    device.room
+            devices_with_endpoint_pins = [
+                (
+                    device,
+                    resolve_device_endpoint_pin(
+                        device.pin,
+                        device.name,
+                        device.type,
+                        device.room
+                    )
                 )
+                for device in target_devices
+            ]
+            endpoint_pins = {
+                endpoint_pin
+                for _, endpoint_pin in devices_with_endpoint_pins
+            }
+            bulk_indoor_lights = (
+                INDOOR_LIGHT_ENDPOINT_PINS.issubset(endpoint_pins)
+            )
+
+            if bulk_indoor_lights:
+                await set_all_indoor_lights(action)
+
+                for device, endpoint_pin in devices_with_endpoint_pins:
+                    if endpoint_pin in INDOOR_LIGHT_ENDPOINT_PINS:
+                        device.status = action == "on"
+
+            for device, endpoint_pin in devices_with_endpoint_pins:
+                if bulk_indoor_lights and endpoint_pin in INDOOR_LIGHT_ENDPOINT_PINS:
+                    continue
+
                 await send_command(endpoint_pin, action)
                 device.status = action == "on"
         except httpx.HTTPError as exc:

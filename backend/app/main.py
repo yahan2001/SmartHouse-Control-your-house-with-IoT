@@ -12,7 +12,6 @@ from app.routers.device_router import router
 from app.routers.sensor_router import router as sensor_router
 from app.routers.assistant_router import router as assistant_router
 from app.routers.notification_router import router as notification_router
-from app.routers.door_router import router as door_router
 
 app = FastAPI()
 
@@ -58,4 +57,3 @@ app.include_router(router)
 app.include_router(sensor_router)
 app.include_router(assistant_router)
 app.include_router(notification_router)
-app.include_router(door_router)

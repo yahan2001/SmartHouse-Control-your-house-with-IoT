@@ -89,6 +89,7 @@ Return this exact JSON shape:
   "action": "on" | "off" | null,
   "device_id": number | null,
   "device_ids": [number] | null,
+  "automation": "light" | "clothes" | "yard_light" | null,
   "confidence": 0.0-1.0,
   "message": "short Vietnamese explanation"
 }}
@@ -96,7 +97,10 @@ Return this exact JSON shape:
 Rules:
 - Match device by name, type, and room.
 - Example: "bat den phong khach" should choose the light in living room.
-- If the user asks for all lights/devices, use device_ids and set device_id to null.
+- If the user asks for all lights, choose only indoor lights. Do not include yard/outdoor/garden lights unless the user explicitly mentions yard/outdoor/garden.
+- If the user asks for all devices, use device_ids and set device_id to null.
+- If the user asks for automatic mode, use automation and set device_id/device_ids to null.
+- Automation examples: "bat tu dong den" => "light", "bat tu dong phoi do" => "clothes", "tat tu dong den san" => "yard_light".
 - If the command is unclear or no device matches, use null for action/device_id.
 """
 
@@ -138,6 +142,8 @@ Rules:
 
     if parsed.get("action") not in ("on", "off", None):
         raise GeminiCommandError("Gemini returned an invalid action")
+    if parsed.get("automation") not in ("light", "clothes", "yard_light", None):
+        raise GeminiCommandError("Gemini returned an invalid automation")
 
     return parsed
 
@@ -170,6 +176,7 @@ Return this exact JSON shape:
   "action": "on" | "off" | null,
   "device_id": number | null,
   "device_ids": [number] | null,
+  "automation": "light" | "clothes" | "yard_light" | null,
   "confidence": 0.0-1.0,
   "message": "short Vietnamese explanation"
 }}
@@ -177,7 +184,10 @@ Return this exact JSON shape:
 Rules:
 - Match device by name, type, and room.
 - Example: if the user says "bat den phong khach", choose the light in living room.
-- If the user asks for all lights/devices, use device_ids and set device_id to null.
+- If the user asks for all lights, choose only indoor lights. Do not include yard/outdoor/garden lights unless the user explicitly mentions yard/outdoor/garden.
+- If the user asks for all devices, use device_ids and set device_id to null.
+- If the user asks for automatic mode, use automation and set device_id/device_ids to null.
+- Automation examples: "bat tu dong den" => "light", "bat tu dong phoi do" => "clothes", "tat tu dong den san" => "yard_light".
 - If the audio is unclear or no device matches, use null for action/device_id.
 """
 
@@ -225,5 +235,7 @@ Rules:
 
     if parsed.get("action") not in ("on", "off", None):
         raise GeminiCommandError("Gemini returned an invalid action")
+    if parsed.get("automation") not in ("light", "clothes", "yard_light", None):
+        raise GeminiCommandError("Gemini returned an invalid automation")
 
     return parsed

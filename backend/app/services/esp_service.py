@@ -17,6 +17,13 @@ _latest_esp32_ip = ESP32_IP
 _latest_esp32_cam_ip = ESP32_CAM_IP
 
 CURRENT_ENDPOINT_PINS = {14, 21, 25, 26, 27, 32, 33}
+LEGACY_ENDPOINT_PIN_MAP = {
+    2: 25,
+    6: 26,
+    7: 27,
+    10: 32,
+    5: 21
+}
 
 
 def set_esp32_ip_from_host(host: str | None) -> None:
@@ -81,6 +88,9 @@ def resolve_device_endpoint_pin(
     device_type: str | None = None,
     room: str | None = None
 ) -> int:
+    if pin in LEGACY_ENDPOINT_PIN_MAP:
+        return LEGACY_ENDPOINT_PIN_MAP[pin]
+
     if pin in CURRENT_ENDPOINT_PINS:
         return pin
 
@@ -140,6 +150,23 @@ async def send_command(pin: int, action: str):
         return response.json()
     except ValueError:
         return {"message": response.text}
+
+
+async def set_all_indoor_lights(action: str):
+    url = f"{get_esp32_ip()}/lights/all/{action}"
+    print(f"ESP32 request: GET {url}")
+
+    timeout = httpx.Timeout(
+        ESP32_COMMAND_TIMEOUT_SECONDS,
+        connect=1.0
+    )
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(url)
+
+    response.raise_for_status()
+
+    return response.json()
 
 
 async def set_automatic_light(action: str):

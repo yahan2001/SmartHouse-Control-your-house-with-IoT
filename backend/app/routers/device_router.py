@@ -151,6 +151,28 @@ def is_yard_light_device(device: Device) -> bool:
 @router.get("/", response_model=list[DeviceResponse])
 async def get_devices(db: Session = Depends(get_db)):
 
+    try:
+        clothes_result = await get_automatic_clothes_status()
+    except httpx.HTTPError:
+        clothes_result = None
+
+    if isinstance(clothes_result, dict):
+        clothesline_status = clothes_result.get("clothesline")
+
+        if clothesline_status is not None:
+            (
+                db.query(Device)
+                .filter(
+                    Device.pin == 14,
+                    Device.status != bool(clothesline_status)
+                )
+                .update(
+                    {Device.status: bool(clothesline_status)},
+                    synchronize_session=False
+                )
+            )
+            await run_in_threadpool(db.commit)
+
     devices = await run_in_threadpool(lambda: db.query(Device).all())
 
     return devices
@@ -162,6 +184,73 @@ async def read_camera_config():
     return {
         "baseUrl": get_esp32_cam_ip(),
         "streamUrl": get_esp32_cam_stream_url()
+    }
+
+
+@router.get("/clothesline/test/status")
+async def read_clothesline_test_status():
+
+    try:
+        result = await get_automatic_clothes_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="ESP32 did not respond"
+        ) from exc
+
+    return {
+        "automatic": bool(result.get("automatic")),
+        "raining": result.get("raining"),
+        "clothesline": result.get("clothesline")
+    }
+
+
+@router.get("/clothesline/test/{action}")
+@router.post("/clothesline/test/{action}")
+async def test_clothesline_servo(
+    action: str,
+    db: Session = Depends(get_db)
+):
+
+    if action not in ("on", "off"):
+        raise HTTPException(
+            status_code=400,
+            detail="Action must be 'on' or 'off'"
+        )
+
+    try:
+        result = await send_command(14, action)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=f"ESP32 did not respond at /device/14/{action}"
+        ) from exc
+
+    clothesline_status = (
+        bool(result.get("clothesline"))
+        if isinstance(result, dict) and result.get("clothesline") is not None
+        else action == "on"
+    )
+
+    (
+        db.query(Device)
+        .filter(
+            Device.pin == 14,
+            Device.status != clothesline_status
+        )
+        .update(
+            {Device.status: clothesline_status},
+            synchronize_session=False
+        )
+    )
+    await run_in_threadpool(db.commit)
+
+    return {
+        "message": "success",
+        "action": action,
+        "pin": 14,
+        "status": clothesline_status,
+        "esp32": result
     }
 
 
@@ -241,7 +330,15 @@ async def control_device(
 
     if isinstance(result, dict):
         sync_light_statuses(db, result)
-        automatic = result.get("automatic", automatic)
+        if "automaticIndoor" in result:
+            automatic = result.get("automaticIndoor")
+        elif manually_controls_light:
+            automatic = result.get("automatic", automatic)
+
+        if "automaticYard" in result:
+            automatic_yard = result.get("automaticYard")
+        elif manually_controls_yard_light:
+            automatic_yard = result.get("automatic", automatic_yard)
 
     await run_in_threadpool(db.commit)
 
@@ -279,7 +376,9 @@ async def control_automatic_light(
 
     return {
         "message": "success",
-        "automatic": bool(result.get("automatic"))
+        "automatic": bool(result.get("automatic")),
+        "automaticYard": result.get("automaticYard"),
+        "yardLight": result.get("yardLight")
     }
 
 
@@ -329,6 +428,7 @@ async def control_automatic_yard_light(
     return {
         "message": "success",
         "automatic": bool(result.get("automatic")),
+        "automaticIndoor": result.get("automaticIndoor"),
         "motionDetected": result.get("motionDetected"),
         "dark": result.get("dark"),
         "yardLight": result.get("yardLight")

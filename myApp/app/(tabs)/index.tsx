@@ -33,14 +33,14 @@ import {
 } from "expo-audio";
 
 const SCREEN = Dimensions.get("window");
-const MAX_GAS_VALUE = 1500;
+const MAX_GAS_VALUE = 3500;
 const SENSOR_REFRESH_INTERVAL_MS = 5000;
 const DEVICE_REFRESH_INTERVAL_MS = 15000;
 const POLLING_REQUEST_TIMEOUT_MS = 2500;
 const DEVICE_CONTROL_TIMEOUT_MS = 6000;
 const DARK_LIGHT_VALUE = 3000;
 const BRIGHT_LIGHT_VALUE = 2900;
-const FALLBACK_BACKEND_IP = "192.168.2.7:8000";
+const FALLBACK_BACKEND_IP = "192.168.110.107:8000";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -142,9 +142,6 @@ export default function HomeScreen() {
   const [tempCameraIp, setTempCameraIp] = useState("192.168.2.45");
   const [cameraReloadKey, setCameraReloadKey] = useState(0);
   const [isIpModalOpen, setIsIpModalOpen] = useState(false);
-  const [doorPassword, setDoorPassword] = useState("");
-  const [doorPasswordConfirm, setDoorPasswordConfirm] = useState("");
-  const [isDoorPasswordSaving, setIsDoorPasswordSaving] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
   const [gas, setGas] = useState(0);
   const [light, setLight] = useState(0);
@@ -489,6 +486,9 @@ export default function HomeScreen() {
       const action = automaticLight ? "off" : "on";
       const response = await axios.post(`${getApiUrl()}/devices/automatic-light/mode`, { action });
       setAutomaticLight(Boolean(response.data.automatic));
+      if (typeof response.data.automaticYard === "boolean") {
+        setAutomaticYardLight(response.data.automaticYard);
+      }
       await fetchDevices(true);
     } catch (error) {
       console.log("Error automatic light:", error);
@@ -514,6 +514,9 @@ export default function HomeScreen() {
       const action = automaticYardLight ? "off" : "on";
       const response = await axios.post(`${getApiUrl()}/devices/automatic-yard-light/mode`, { action });
       setAutomaticYardLight(Boolean(response.data.automatic));
+      if (typeof response.data.automaticIndoor === "boolean") {
+        setAutomaticLight(response.data.automaticIndoor);
+      }
       if (typeof response.data.motionDetected === "boolean") {
         setMotionDetected(response.data.motionDetected);
       }
@@ -521,38 +524,6 @@ export default function HomeScreen() {
     } catch (error) {
       console.log("Error automatic yard light:", error);
       Alert.alert("Tự động", "Không bật/tắt được đèn sân tự động trên ESP32.");
-    }
-  };
-
-  const updateDoorPassword = async () => {
-    const password = doorPassword.trim();
-    const confirmation = doorPasswordConfirm.trim();
-
-    if (!/^\d{4,12}$/.test(password)) {
-      Alert.alert("Mat khau cua", "Mat khau phai gom 4-12 chu so.");
-      return;
-    }
-
-    if (password !== confirmation) {
-      Alert.alert("Mat khau cua", "Mat khau xac nhan khong khop.");
-      return;
-    }
-
-    try {
-      setIsDoorPasswordSaving(true);
-      await axios.post(
-        `${getApiUrl()}/door/password`,
-        { password },
-        { timeout: DEVICE_CONTROL_TIMEOUT_MS }
-      );
-      setDoorPassword("");
-      setDoorPasswordConfirm("");
-      Alert.alert("Mat khau cua", "Da cap nhat mat khau keypad.");
-    } catch (error) {
-      console.log("Error updating door password:", error);
-      Alert.alert("Mat khau cua", "Khong cap nhat duoc mat khau tren ESP cua.");
-    } finally {
-      setIsDoorPasswordSaving(false);
     }
   };
 
@@ -985,55 +956,6 @@ export default function HomeScreen() {
           thumbColor={isDark ? "#2563EB" : "#F8FAFC"}
         />
       </View>
-      <View style={[styles.passwordCard, isDark && styles.surfaceDark]}>
-        <View style={styles.passwordHeader}>
-          <View style={styles.themeIconWrap}>
-            <MaterialCommunityIcons name="form-textbox-password" size={18} color="#2563EB" />
-          </View>
-          <View style={styles.themeTextBlock}>
-            <Text style={[styles.themeTitle, isDark && styles.textDark]}>
-              Mat khau keypad cua
-            </Text>
-            <Text style={[styles.themeSubtitle, isDark && styles.mutedDark]}>
-              Dung phim # de xac nhan, phim * de xoa tren keypad
-            </Text>
-          </View>
-        </View>
-        <TextInput
-          value={doorPassword}
-          onChangeText={setDoorPassword}
-          style={styles.passwordInput}
-          placeholder="Mat khau moi"
-          placeholderTextColor="#64748B"
-          keyboardType="number-pad"
-          secureTextEntry
-          maxLength={12}
-        />
-        <TextInput
-          value={doorPasswordConfirm}
-          onChangeText={setDoorPasswordConfirm}
-          style={styles.passwordInput}
-          placeholder="Nhap lai mat khau"
-          placeholderTextColor="#64748B"
-          keyboardType="number-pad"
-          secureTextEntry
-          maxLength={12}
-        />
-        <TouchableOpacity
-          style={[styles.primaryButton, isDoorPasswordSaving && styles.disabledButton]}
-          onPress={updateDoorPassword}
-          disabled={isDoorPasswordSaving}
-        >
-          {isDoorPasswordSaving ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <Ionicons name="keypad-outline" size={18} color="#FFFFFF" />
-          )}
-          <Text style={styles.primaryButtonText}>
-            {isDoorPasswordSaving ? "Dang luu..." : "Luu mat khau"}
-          </Text>
-        </TouchableOpacity>
-      </View>
       <TouchableOpacity
         style={styles.primaryButton}
         onPress={() => {
@@ -1062,7 +984,7 @@ export default function HomeScreen() {
     { key: "profile", label: "CÁ NHÂN", icon: "account-outline" },
   ];
 
-  const assistantSuggestions = ["Bật toàn bộ đèn", "Tắt toàn bộ đèn", "Bật đèn phòng khách", "Đóng cửa chính", "Mở cửa chính"];
+  const assistantSuggestions = ["Bật 4 đèn trong nhà", "Tắt 4 đèn trong nhà", "Bật đèn sân", "Tắt đèn sân", "Mở phơi đồ", "Thu phơi đồ", "Mở cửa chính"];
 
   const visibleBottomTabs: { key: AppTab; label: string; icon: IconName }[] = [
     ...bottomTabs.slice(0, 2),
@@ -1290,9 +1212,6 @@ const styles = StyleSheet.create({
   themeTextBlock: { flex: 1 },
   themeTitle: { color: "#0F172A", fontSize: 14, fontWeight: "900" },
   themeSubtitle: { color: "#64748B", fontSize: 11, fontWeight: "700", marginTop: 2 },
-  passwordCard: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 8, borderWidth: 1, elevation: 2, gap: 10, marginBottom: 14, padding: 12, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.06, shadowRadius: 12 },
-  passwordHeader: { alignItems: "center", flexDirection: "row", gap: 12 },
-  passwordInput: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 8, borderWidth: 1, color: "#0F172A", fontSize: 14, fontWeight: "700", paddingHorizontal: 12, paddingVertical: 11 },
   primaryButton: { alignItems: "center", backgroundColor: "#2563EB", borderRadius: 8, flexDirection: "row", gap: 8, justifyContent: "center", marginTop: 4, paddingVertical: 13 },
   disabledButton: { opacity: 0.7 },
   primaryButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
