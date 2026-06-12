@@ -2,11 +2,7 @@
 
 Project dieu khien nha thong minh bang mot ESP32, FastAPI backend va ung dung mobile Expo/React Native.
 
-He thong hien tai:
 
-- Khong dung keypad de mo cua.
-- Chi dung mot ESP32 chay firmware trong `src/main.cpp`.
-- Cua duoc mo/dong tu app mobile. App goi backend FastAPI, backend gui lenh HTTP den ESP32.
 
 ## Thanh phan chinh
 
