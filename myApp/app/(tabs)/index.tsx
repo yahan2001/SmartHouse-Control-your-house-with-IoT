@@ -23,7 +23,6 @@ import * as DeviceInfo from "expo-device";
 import * as Notifications from "expo-notifications";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
-import { WebView } from "react-native-webview";
 import {
   AudioModule,
   RecordingPresets,
@@ -61,7 +60,7 @@ type Device = {
 };
 
 type DeviceAction = "on" | "off";
-type AppTab = "home" | "rooms" | "camera" | "automations" | "profile";
+type AppTab = "home" | "rooms" | "automations" | "profile";
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
 const ROOM_FILTERS = [
@@ -138,9 +137,6 @@ export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<AppTab>("home");
   const [serverIp, setServerIp] = useState(getDefaultBackendIp);
   const [tempIp, setTempIp] = useState(getDefaultBackendIp);
-  const [cameraIp, setCameraIp] = useState("192.168.2.45");
-  const [tempCameraIp, setTempCameraIp] = useState("192.168.2.45");
-  const [cameraReloadKey, setCameraReloadKey] = useState(0);
   const [isIpModalOpen, setIsIpModalOpen] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
   const [gas, setGas] = useState(0);
@@ -176,71 +172,6 @@ export default function HomeScreen() {
     }
     return formattedIp.replace(/\/+$/, "");
   }, [serverIp]);
-
-  const getCameraBaseUrl = useCallback((value = cameraIp) => {
-    const trimmedIp = value.trim().replace(/\/+$/, "");
-
-    if (!trimmedIp) {
-      return "";
-    }
-
-    const url = trimmedIp.startsWith("http")
-      ? trimmedIp
-      : `http://${trimmedIp}`;
-
-    if (url.includes("/stream")) {
-      return url.replace(/\/stream.*$/, "");
-    }
-
-    const withoutProtocol = url.replace(/^https?:\/\//, "");
-    const host = withoutProtocol.split("/")[0];
-
-    if (host.includes(":")) {
-      return url;
-    }
-
-    return url.replace(host, `${host}:81`);
-  }, [cameraIp]);
-
-  const getCameraStreamUrl = useCallback(() => {
-    const baseUrl = getCameraBaseUrl();
-
-    if (!baseUrl) {
-      return "";
-    }
-
-    return `${baseUrl}/stream`;
-  }, [getCameraBaseUrl]);
-
-  const getCameraPageUrl = useCallback(() => {
-    const trimmedIp = cameraIp.trim().replace(/\/+$/, "");
-
-    if (!trimmedIp) {
-      return "";
-    }
-
-    const withProtocol = trimmedIp.startsWith("http")
-      ? trimmedIp
-      : `http://${trimmedIp}`;
-
-    const cleanedUrl = withProtocol.replace(/\/stream.*$/, "");
-
-    try {
-      const url = new URL(cleanedUrl);
-
-      if (url.port === "81") {
-        url.port = "";
-      }
-
-      url.pathname = "/";
-      url.search = "";
-      url.hash = "";
-
-      return url.toString().replace(/\/$/, "");
-    } catch {
-      return cleanedUrl.replace(/:81$/, "");
-    }
-  }, [cameraIp]);
 
   const now = new Date();
   const formattedDate = now
@@ -329,29 +260,12 @@ export default function HomeScreen() {
     }
   }, [getApiUrl]);
 
-  const fetchCameraConfig = useCallback(async () => {
-    try {
-      const response = await axios.get(`${getApiUrl()}/devices/camera`, {
-        timeout: POLLING_REQUEST_TIMEOUT_MS,
-      });
-      const baseUrl = String(response.data?.baseUrl || "").replace(/^https?:\/\//, "");
-
-      if (baseUrl) {
-        setCameraIp(baseUrl);
-        setTempCameraIp(baseUrl);
-      }
-    } catch (error) {
-      console.log("Error fetching camera config:", error);
-    }
-  }, [getApiUrl]);
-
   useEffect(() => {
     fetchDevices(false);
     fetchSensorData();
     fetchAutomaticLightStatus();
     fetchAutomaticClothesStatus();
     fetchAutomaticYardLightStatus();
-    fetchCameraConfig();
 
     const sensorInterval = setInterval(fetchSensorData, SENSOR_REFRESH_INTERVAL_MS);
     const deviceInterval = setInterval(() => fetchDevices(true), DEVICE_REFRESH_INTERVAL_MS);
@@ -360,7 +274,7 @@ export default function HomeScreen() {
       clearInterval(sensorInterval);
       clearInterval(deviceInterval);
     };
-  }, [fetchAutomaticClothesStatus, fetchAutomaticLightStatus, fetchAutomaticYardLightStatus, fetchCameraConfig, fetchDevices, fetchSensorData]);
+  }, [fetchAutomaticClothesStatus, fetchAutomaticLightStatus, fetchAutomaticYardLightStatus, fetchDevices, fetchSensorData]);
 
   useEffect(() => {
     Animated.loop(
@@ -813,89 +727,6 @@ export default function HomeScreen() {
     </View>
   );
 
-  const cameraStreamUrl = getCameraStreamUrl();
-  const cameraPageUrl = getCameraPageUrl();
-
-  const renderCamera = () => (
-    <>
-      {renderHeader("Camera", "Xem truc tiep ESP32-CAM trong LAN")}
-      <View style={[styles.cameraPanel, isDark && styles.surfaceDark]}>
-        <View style={styles.cameraPanelHeader}>
-          <View style={styles.cameraIconWrap}>
-            <MaterialCommunityIcons name="cctv" size={21} color="#2563EB" />
-          </View>
-          <View style={styles.cameraHeaderText}>
-            <Text style={[styles.cameraTitle, isDark && styles.textDark]}>ESP32-CAM</Text>
-            <Text style={[styles.cameraSubtitle, isDark && styles.mutedDark]} numberOfLines={1}>
-              {cameraStreamUrl || "Chua co dia chi stream"}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.cameraReloadButton}
-            onPress={() => setCameraReloadKey((key) => key + 1)}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="refresh" size={19} color="#2563EB" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.cameraInputRow}>
-          <TextInput
-            value={tempCameraIp}
-            onChangeText={setTempCameraIp}
-            style={[styles.cameraInput, isDark && styles.cameraInputDark]}
-            placeholder="Vi du: 192.168.1.45 hoac 192.168.1.45:81"
-            placeholderTextColor="#94A3B8"
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-          />
-          <TouchableOpacity
-            style={styles.cameraConnectButton}
-            onPress={() => {
-              const nextIp = tempCameraIp.trim();
-              if (!nextIp) {
-                Alert.alert("Camera", "Nhap IP cua ESP32-CAM trong mang LAN.");
-                return;
-              }
-              setCameraIp(nextIp);
-              setCameraReloadKey((key) => key + 1);
-            }}
-          >
-            <Ionicons name="play" size={17} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.cameraFrame}>
-          {cameraStreamUrl && Platform.OS === "web" ? (
-            React.createElement("iframe", {
-              key: `${cameraStreamUrl}-${cameraReloadKey}`,
-              src: cameraStreamUrl,
-              style: styles.cameraIframe,
-              title: "ESP32-CAM livestream",
-            })
-          ) : cameraStreamUrl ? (
-            <WebView
-              key={`${cameraPageUrl}-${cameraReloadKey}`}
-              source={{ uri: cameraPageUrl || cameraStreamUrl }}
-              style={styles.cameraWebView}
-              javaScriptEnabled
-              domStorageEnabled
-              mixedContentMode="always"
-              allowsInlineMediaPlayback
-              originWhitelist={["*"]}
-            />
-          ) : (
-            <View style={styles.cameraEmpty}>
-              <MaterialCommunityIcons name="video-off-outline" size={38} color="#94A3B8" />
-              <Text style={styles.emptyText}>Nhap IP ESP32-CAM de xem stream</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </>
-  );
-
   const renderAutomations = () => (
     <>
       {renderHeader("Tự động", "Thiết lập các chế độ tự động")}
@@ -971,7 +802,6 @@ export default function HomeScreen() {
 
   const renderActiveTab = () => {
     if (activeTab === "rooms") return renderRooms();
-    if (activeTab === "camera") return renderCamera();
     if (activeTab === "automations") return renderAutomations();
     if (activeTab === "profile") return renderProfile();
     return renderHome();
@@ -986,11 +816,7 @@ export default function HomeScreen() {
 
   const assistantSuggestions = ["Bật 4 đèn trong nhà", "Tắt 4 đèn trong nhà", "Bật đèn sân", "Tắt đèn sân", "Mở phơi đồ", "Thu phơi đồ", "Mở cửa chính"];
 
-  const visibleBottomTabs: { key: AppTab; label: string; icon: IconName }[] = [
-    ...bottomTabs.slice(0, 2),
-    { key: "camera", label: "CAM", icon: "cctv" },
-    ...bottomTabs.slice(2),
-  ];
+  const visibleBottomTabs = bottomTabs;
 
   return (
     <SafeAreaView style={[styles.safeArea, isDark && styles.safeAreaDark]}>
@@ -1215,21 +1041,6 @@ const styles = StyleSheet.create({
   primaryButton: { alignItems: "center", backgroundColor: "#2563EB", borderRadius: 8, flexDirection: "row", gap: 8, justifyContent: "center", marginTop: 4, paddingVertical: 13 },
   disabledButton: { opacity: 0.7 },
   primaryButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
-  cameraPanel: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 8, borderWidth: 1, elevation: 4, padding: 12, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.08, shadowRadius: 14 },
-  cameraPanelHeader: { alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 12 },
-  cameraIconWrap: { alignItems: "center", backgroundColor: "#EFF6FF", borderRadius: 8, height: 38, justifyContent: "center", width: 38 },
-  cameraHeaderText: { flex: 1, minWidth: 0 },
-  cameraTitle: { color: "#0F172A", fontSize: 15, fontWeight: "900" },
-  cameraSubtitle: { color: "#64748B", fontSize: 11, fontWeight: "700", marginTop: 2 },
-  cameraReloadButton: { alignItems: "center", backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 8, borderWidth: 1, height: 38, justifyContent: "center", width: 38 },
-  cameraInputRow: { alignItems: "center", flexDirection: "row", gap: 8, marginBottom: 12 },
-  cameraInput: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 8, borderWidth: 1, color: "#0F172A", flex: 1, fontSize: 13, fontWeight: "700", paddingHorizontal: 11, paddingVertical: 10 },
-  cameraInputDark: { backgroundColor: "#0F1A2B", borderColor: "#1F2B3D", color: "#F8FAFC" },
-  cameraConnectButton: { alignItems: "center", backgroundColor: "#2563EB", borderRadius: 8, height: 42, justifyContent: "center", width: 42 },
-  cameraFrame: { aspectRatio: 4 / 3, backgroundColor: "#020617", borderRadius: 8, overflow: "hidden", width: "100%" },
-  cameraIframe: { backgroundColor: "#020617", borderWidth: 0, height: "100%", width: "100%" },
-  cameraWebView: { backgroundColor: "#020617", flex: 1 },
-  cameraEmpty: { alignItems: "center", flex: 1, gap: 8, justifyContent: "center", padding: 18 },
   bottomNav: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderTopWidth: 1, bottom: 0, elevation: 12, flexDirection: "row", height: 76, justifyContent: "space-around", left: 0, paddingBottom: 8, position: "absolute", right: 0, shadowColor: "#0F172A", shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.08, shadowRadius: 14 },
   bottomNavItem: { alignItems: "center", borderRadius: 8, flex: 1, gap: 4, justifyContent: "center", marginHorizontal: 4, paddingVertical: 7 },
   bottomNavItemActive: { backgroundColor: "#EFF6FF" },

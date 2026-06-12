@@ -1,45 +1,49 @@
 # SmartHouse Control Your House With IoT
 
-Project điều khiển nhà thông minh bằng ESP32, FastAPI backend và ứng dụng mobile Expo/React Native.
+Project dieu khien nha thong minh bang mot ESP32, FastAPI backend va ung dung mobile Expo/React Native.
 
-Hệ thống hiện tại không dùng keypad để mở cửa. Cửa được mở/đóng từ app mobile, app gọi backend FastAPI, backend gửi lệnh HTTP đến ESP32.
+He thong hien tai:
 
-## Thành phần chính
+- Khong dung keypad de mo cua.
+- Chi dung mot ESP32 chay firmware trong `src/main.cpp`.
+- Cua duoc mo/dong tu app mobile. App goi backend FastAPI, backend gui lenh HTTP den ESP32.
 
-- `src/main.cpp`: firmware ESP32 chính cho đèn, cảm biến gas, cảm biến mưa, PIR, DHT11, servo cửa và giàn phơi.
-- `backend/`: FastAPI backend, lưu dữ liệu cảm biến, điều khiển thiết bị, push notification và trợ lý giọng nói Gemini.
-- `myApp/`: app mobile Expo/React Native để xem cảm biến, điều khiển thiết bị, camera và tự động hóa.
-- `esp/`: các sketch ESP thử nghiệm hoặc phần ESP32-CAM/AWS IoT riêng.
+## Thanh phan chinh
 
-## Luồng mở cửa qua app
+- `src/main.cpp`: firmware ESP32 chinh cho den, cam bien gas, cam bien mua, PIR, DHT11, servo cua va gian phoi.
+- `backend/`: FastAPI backend, luu du lieu cam bien, dieu khien thiet bi, push notification va tro ly giong noi Gemini.
+- `myApp/`: app mobile Expo/React Native de xem cam bien, dieu khien thiet bi va che do tu dong.
+- `platformio.ini`: cau hinh PlatformIO cho ESP32.
 
-1. Người dùng bấm mở cửa trong app.
-2. App gọi backend:
+## Luong mo cua qua app
+
+1. Nguoi dung bam mo cua trong app.
+2. App goi backend:
 
 ```text
 POST http://<BACKEND_IP>:8000/devices/<door_device_id>
 ```
 
-3. Backend resolve thiết bị cửa sang pin endpoint `21`.
-4. Backend gửi lệnh đến ESP32:
+3. Backend resolve thiet bi cua sang endpoint pin `21`.
+4. Backend gui lenh den ESP32:
 
 ```text
 GET http://<ESP32_IP>/device/21/on
 ```
 
-5. ESP32 quay servo mở cửa.
+5. ESP32 quay servo mo cua.
 
-Lệnh đóng cửa:
+Lenh dong cua:
 
 ```text
 GET http://<ESP32_IP>/device/21/off
 ```
 
-## 1. Chạy firmware ESP32
+## 1. Chay firmware ESP32
 
-Mở project bằng PlatformIO.
+Mo project bang PlatformIO.
 
-Kiểm tra cổng upload trong `platformio.ini`:
+Kiem tra cong upload trong `platformio.ini`:
 
 ```ini
 upload_port = COM8
@@ -47,7 +51,7 @@ monitor_port = COM8
 monitor_speed = 115200
 ```
 
-Cập nhật Wi-Fi và IP backend trong `src/main.cpp` nếu cần:
+Cap nhat Wi-Fi va IP backend trong `src/main.cpp` neu can:
 
 ```cpp
 const char* ssid = "...";
@@ -55,9 +59,9 @@ const char* password = "...";
 String serverUrl = "http://<BACKEND_IP>:8000/sensor-data/";
 ```
 
-Upload firmware lên ESP32, sau đó mở Serial Monitor baud `115200` để xem IP của ESP32.
+Upload firmware len ESP32, sau do mo Serial Monitor baud `115200` de xem IP cua ESP32.
 
-## 2. Chạy backend FastAPI
+## 2. Chay backend FastAPI
 
 ```powershell
 cd backend
@@ -67,7 +71,7 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Mở `backend/.env` và sửa theo máy của bạn:
+Mo `backend/.env` va sua theo may cua ban:
 
 ```env
 DB_HOST=localhost
@@ -76,24 +80,23 @@ DB_USER=root
 DB_PASSWORD=
 DB_NAME=smart_home
 ESP32_IP=http://<ESP32_IP>
-ESP32_CAM_IP=http://<ESP32_CAM_IP>:81
 GEMINI_API_KEY=input_your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
-Chạy backend:
+Chay backend:
 
 ```powershell
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Backend sẽ chạy tại:
+Backend se chay tai:
 
 ```text
 http://<MAY_TINH_IP>:8000
 ```
 
-## 3. Chạy app mobile
+## 3. Chay app mobile
 
 ```powershell
 cd myApp
@@ -101,23 +104,23 @@ npm install
 npm run start
 ```
 
-Mở app bằng Expo Go trên điện thoại.
+Mo app bang Expo Go tren dien thoai.
 
-Điện thoại, máy chạy backend và ESP32 nên ở cùng một mạng Wi-Fi.
+Dien thoai, may chay backend va ESP32 nen o cung mot mang Wi-Fi.
 
-Trong app, mở phần cấu hình server và nhập:
+Trong app, mo phan cau hinh server va nhap:
 
 ```text
 <MAY_TINH_IP>:8000
 ```
 
-Ví dụ:
+Vi du:
 
 ```text
 192.168.1.100:8000
 ```
 
-## 4. Các endpoint quan trọng
+## Endpoint quan trong
 
 Backend:
 
@@ -128,6 +131,7 @@ GET  /sensor-data/latest
 POST /sensor-data/
 POST /assistant/voice-command
 POST /assistant/voice-audio
+POST /notifications/register
 ```
 
 ESP32:
@@ -137,6 +141,14 @@ GET /device/21/on
 GET /device/21/off
 GET /device/25/on
 GET /device/25/off
+GET /device/26/on
+GET /device/26/off
+GET /device/27/on
+GET /device/27/off
+GET /device/32/on
+GET /device/32/off
+GET /device/33/on
+GET /device/33/off
 GET /automatic-light/on
 GET /automatic-light/off
 GET /automatic-clothes/on
@@ -145,9 +157,9 @@ GET /automatic-yard-light/on
 GET /automatic-yard-light/off
 ```
 
-## 5. Thư viện backend
+## Thu vien backend
 
-Backend chỉ cần các package trong `backend/requirements.txt`:
+Backend chi can cac package trong `backend/requirements.txt`:
 
 ```txt
 fastapi
@@ -159,12 +171,12 @@ python-multipart
 python-dotenv
 ```
 
-Không commit `backend/venv/`, `node_modules/`, `.pio/`, `.expo/` hoặc `__pycache__/`.
+Khong commit `backend/venv/`, `node_modules/`, `.pio/`, `.expo/` hoac `__pycache__/`.
 
-## Lỗi thường gặp
+## Loi thuong gap
 
-- App không kết nối backend: kiểm tra IP máy tính và firewall Windows cho port `8000`.
-- Backend báo ESP32 không phản hồi: kiểm tra `ESP32_IP` trong `backend/.env`.
-- ESP32 không upload được: kiểm tra đúng cổng COM trong `platformio.ini`.
-- Điện thoại không thấy backend: kiểm tra điện thoại và máy tính có cùng Wi-Fi không.
-- Gemini không chạy: kiểm tra `GEMINI_API_KEY` trong `backend/.env`.
+- App khong ket noi backend: kiem tra IP may tinh va firewall Windows cho port `8000`.
+- Backend bao ESP32 khong phan hoi: kiem tra `ESP32_IP` trong `backend/.env`.
+- ESP32 khong upload duoc: kiem tra dung cong COM trong `platformio.ini`.
+- Dien thoai khong thay backend: kiem tra dien thoai va may tinh co cung Wi-Fi khong.
+- Gemini khong chay: kiem tra `GEMINI_API_KEY` trong `backend/.env`.
